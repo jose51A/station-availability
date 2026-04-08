@@ -370,12 +370,14 @@ function StationListView({ data, selectedStation, selectedDay, onSelect }) {
   const { results, stations, days } = data;
 
   const filteredEntries = useMemo(() => {
+    const stationSet = new Set(stations);
     return Object.values(results).filter(e => {
+      if (!stationSet.has(e.station)) return false;
       if (selectedStation && e.station !== selectedStation) return false;
       if (selectedDay && e.day !== selectedDay) return false;
       return true;
     }).sort((a, b) => a.totalFree - b.totalFree);
-  }, [results, selectedStation, selectedDay]);
+  }, [results, stations, selectedStation, selectedDay]);
 
   return (
     <div>
@@ -553,8 +555,16 @@ export default function App() {
   const [view, setView] = useState("heatmap");
   const [selectedStation, setSelectedStation] = useState("");
   const [selectedDay, setSelectedDay] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
   const [detailEntry, setDetailEntry] = useState(null);
   const fileRef = useRef();
+
+  const filteredStations = useMemo(() => {
+    if (!data) return [];
+    if (!searchTerm.trim()) return data.stations;
+    const term = searchTerm.trim().toUpperCase();
+    return data.stations.filter(s => s.includes(term));
+  }, [data, searchTerm]);
 
   const handleFile = useCallback(async (file) => {
     setLoading(true);
@@ -647,11 +657,48 @@ export default function App() {
         <>
           <SummaryStats data={data} />
 
+          <div style={{ position: "relative", marginBottom: 12 }}>
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={e => { setSearchTerm(e.target.value); setDetailEntry(null); }}
+              placeholder="Buscar estacion (ej: PTY, DAV, MIA...)"
+              style={{
+                width: "100%", fontSize: 14, padding: "10px 14px 10px 38px",
+                borderRadius: 10, border: "0.5px solid var(--color-border-tertiary)",
+                background: "var(--color-background-primary)", color: "var(--color-text-primary)",
+                outline: "none", boxSizing: "border-box"
+              }}
+            />
+            <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "var(--color-text-tertiary)", pointerEvents: "none" }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="8"/>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+            </div>
+            {searchTerm && (
+              <button
+                onClick={() => setSearchTerm("")}
+                style={{
+                  position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
+                  background: "transparent", border: "none", cursor: "pointer",
+                  color: "var(--color-text-tertiary)", fontSize: 18, padding: "4px 8px"
+                }}
+                title="Limpiar busqueda"
+              >×</button>
+            )}
+            {searchTerm && (
+              <div style={{ fontSize: 11, color: "var(--color-text-tertiary)", marginTop: 6, marginLeft: 4 }}>
+                {filteredStations.length} estacion{filteredStations.length !== 1 ? "es" : ""} coinciden con "{searchTerm}"
+              </div>
+            )}
+          </div>
+
           <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
             <select value={selectedStation} onChange={e => { setSelectedStation(e.target.value); setDetailEntry(null); }}
               style={{ fontSize: 13, padding: "6px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-primary)", color: "var(--color-text-primary)", minWidth: 120 }}>
-              <option value="">Todas las estaciones</option>
-              {data.stations.map(s => <option key={s} value={s}>{s}</option>)}
+              <option value="">Todas las estaciones ({filteredStations.length})</option>
+              {filteredStations.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
 
             <select value={selectedDay} onChange={e => { setSelectedDay(e.target.value); setDetailEntry(null); }}
@@ -673,7 +720,7 @@ export default function App() {
               ))}
             </div>
 
-            <button onClick={() => { setData(null); setSelectedStation(""); setSelectedDay(""); setDetailEntry(null); setError(null); }}
+            <button onClick={() => { setData(null); setSelectedStation(""); setSelectedDay(""); setSearchTerm(""); setDetailEntry(null); setError(null); }}
               style={{ fontSize: 12, padding: "5px 14px", borderRadius: 6, border: "0.5px solid var(--color-border-tertiary)", background: "transparent", color: "var(--color-text-secondary)", cursor: "pointer" }}>
               Cargar otro archivo
             </button>
@@ -682,14 +729,14 @@ export default function App() {
           {detailEntry && <StationDetail data={detailEntry} />}
 
           {view === "heatmap" && (
-            <HeatmapView data={{ ...data, results: data.results, stations: selectedStation ? [selectedStation] : data.stations, days: selectedDay ? [selectedDay] : data.days }}
+            <HeatmapView data={{ ...data, results: data.results, stations: selectedStation ? [selectedStation] : filteredStations, days: selectedDay ? [selectedDay] : data.days }}
               onSelect={setDetailEntry} />
           )}
           {view === "hourly" && (
-            <HourlyView data={data} selectedStation={selectedStation} selectedDay={selectedDay} />
+            <HourlyView data={{ ...data, stations: filteredStations }} selectedStation={selectedStation} selectedDay={selectedDay} />
           )}
           {view === "list" && (
-            <StationListView data={data} selectedStation={selectedStation} selectedDay={selectedDay} onSelect={setDetailEntry} />
+            <StationListView data={{ ...data, stations: filteredStations }} selectedStation={selectedStation} selectedDay={selectedDay} onSelect={setDetailEntry} />
           )}
 
           <div style={{ marginTop: 24, padding: "16px 20px", background: "var(--color-background-secondary)", borderRadius: 12, fontSize: 12, color: "var(--color-text-tertiary)", lineHeight: 1.7 }}>
