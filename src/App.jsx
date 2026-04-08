@@ -1,5 +1,90 @@
-import { useState, useMemo, useCallback, useRef } from "react";
+import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import * as XLSX from "xlsx";
+
+const DB_NAME = "StationAvailabilityDB";
+const STORE_NAME = "files";
+const DB_VERSION = 1;
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => resolve(req.result);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        const store = db.createObjectStore(STORE_NAME, { keyPath: "id", autoIncrement: true });
+        store.createIndex("uploadedAt", "uploadedAt", { unique: false });
+      }
+    };
+  });
+}
+
+async function saveFileToDB(name, processedData, rowCount) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
+    const record = {
+      name,
+      processedData,
+      rowCount,
+      stationCount: processedData.stations.length,
+      dayCount: processedData.days.length,
+      uploadedAt: new Date().toISOString()
+    };
+    const req = store.add(record);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function getAllFilesFromDB() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readonly");
+    const store = tx.objectStore(STORE_NAME);
+    const req = store.getAll();
+    req.onsuccess = () => resolve(req.result.sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt)));
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function getFileFromDB(id) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readonly");
+    const store = tx.objectStore(STORE_NAME);
+    const req = store.get(id);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function deleteFileFromDB(id) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
+    const req = store.delete(id);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function fmtRelativeDate(iso) {
+  const date = new Date(iso);
+  const now = new Date();
+  const diffMs = now - date;
+  const diffMin = Math.floor(diffMs / 60000);
+  const diffHr = Math.floor(diffMs / 3600000);
+  const diffDay = Math.floor(diffMs / 86400000);
+  if (diffMin < 1) return "ahora mismo";
+  if (diffMin < 60) return `hace ${diffMin} min`;
+  if (diffHr < 24) return `hace ${diffHr}h`;
+  if (diffDay < 7) return `hace ${diffDay}d`;
+  return date.toLocaleDateString();
+}
 
 const BUFFER_MINUTES = 60;
 
@@ -548,6 +633,161 @@ function HourlyView({ data, selectedStation, selectedDay }) {
   );
 }
 
+function parseDayString(dayStr) {
+  if (!dayStr) return null;
+  const s = String(dayStr).trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) return { year: +m[1], month: +m[2] - 1, day: +m[3] };
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) return { year: +m[3], month: +m[1] - 1, day: +m[2] };
+  m = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  if (m) return { year: +m[3], month: +m[1] - 1, day: +m[2] };
+  const d = new Date(s);
+  if (!isNaN(d)) return { year: d.getFullYear(), month: d.getMonth(), day: d.getDate() };
+  return null;
+}
+
+function CalendarPicker({ availableDays, selectedDay, onSelect }) {
+  const [open, setOpen] = useState(false);
+  const [viewMonth, setViewMonth] = useState(() => {
+    const first = availableDays[0] ? parseDayString(availableDays[0]) : null;
+    if (first) return new Date(first.year, first.month, 1);
+    return new Date();
+  });
+  const popoverRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClickOutside = (e) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [open]);
+
+  const dayMap = useMemo(() => {
+    const map = new Map();
+    for (const d of availableDays) {
+      const p = parseDayString(d);
+      if (p) map.set(`${p.year}-${p.month}-${p.day}`, d);
+    }
+    return map;
+  }, [availableDays]);
+
+  const monthName = viewMonth.toLocaleDateString("es", { month: "long", year: "numeric" });
+  const firstDay = new Date(viewMonth.getFullYear(), viewMonth.getMonth(), 1);
+  const lastDay = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 0);
+  const startWeekday = (firstDay.getDay() + 6) % 7;
+  const daysInMonth = lastDay.getDate();
+
+  const cells = [];
+  for (let i = 0; i < startWeekday; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const selectedParsed = selectedDay ? parseDayString(selectedDay) : null;
+
+  const prevMonth = () => setViewMonth(new Date(viewMonth.getFullYear(), viewMonth.getMonth() - 1, 1));
+  const nextMonth = () => setViewMonth(new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 1));
+
+  const buttonLabel = selectedDay || "Seleccionar dia";
+
+  return (
+    <div style={{ position: "relative" }} ref={popoverRef}>
+      <button
+        onClick={() => setOpen(!open)}
+        style={{
+          fontSize: 13, padding: "6px 12px", borderRadius: 8,
+          border: "0.5px solid var(--color-border-tertiary)",
+          background: selectedDay ? "var(--color-background-info)" : "var(--color-background-primary)",
+          color: selectedDay ? "var(--color-text-info)" : "var(--color-text-primary)",
+          cursor: "pointer", minWidth: 160, textAlign: "left",
+          display: "flex", alignItems: "center", gap: 8
+        }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+          <line x1="16" y1="2" x2="16" y2="6"/>
+          <line x1="8" y1="2" x2="8" y2="6"/>
+          <line x1="3" y1="10" x2="21" y2="10"/>
+        </svg>
+        <span style={{ flex: 1 }}>{buttonLabel}</span>
+        {selectedDay && (
+          <span
+            onClick={(e) => { e.stopPropagation(); onSelect(""); }}
+            style={{ color: "var(--color-text-tertiary)", fontSize: 16, lineHeight: 1, padding: "0 2px" }}
+            title="Limpiar"
+          >×</span>
+        )}
+      </button>
+
+      {open && (
+        <div style={{
+          position: "absolute", top: "100%", left: 0, marginTop: 6, zIndex: 100,
+          background: "var(--color-background-primary)",
+          border: "0.5px solid var(--color-border-secondary)",
+          borderRadius: 12, padding: 12, minWidth: 280,
+          boxShadow: "0 4px 16px rgba(0,0,0,0.12)"
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <button onClick={prevMonth} style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--color-text-secondary)", padding: "4px 8px", borderRadius: 4, fontSize: 16 }}>‹</button>
+            <span style={{ fontSize: 13, fontWeight: 500, textTransform: "capitalize", color: "var(--color-text-primary)" }}>{monthName}</span>
+            <button onClick={nextMonth} style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--color-text-secondary)", padding: "4px 8px", borderRadius: 4, fontSize: 16 }}>›</button>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2, marginBottom: 4 }}>
+            {["L", "M", "M", "J", "V", "S", "D"].map((d, i) => (
+              <div key={i} style={{ fontSize: 10, fontWeight: 500, color: "var(--color-text-tertiary)", textAlign: "center", padding: "4px 0" }}>{d}</div>
+            ))}
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
+            {cells.map((d, i) => {
+              if (d === null) return <div key={i} />;
+              const key = `${viewMonth.getFullYear()}-${viewMonth.getMonth()}-${d}`;
+              const dayValue = dayMap.get(key);
+              const hasData = !!dayValue;
+              const isSelected = selectedParsed && selectedParsed.year === viewMonth.getFullYear() && selectedParsed.month === viewMonth.getMonth() && selectedParsed.day === d;
+              return (
+                <button
+                  key={i}
+                  disabled={!hasData}
+                  onClick={() => { if (hasData) { onSelect(dayValue); setOpen(false); } }}
+                  style={{
+                    fontSize: 12, padding: "8px 0", borderRadius: 6,
+                    border: "none", cursor: hasData ? "pointer" : "default",
+                    background: isSelected ? "#185FA5" : hasData ? "var(--color-background-info)" : "transparent",
+                    color: isSelected ? "#fff" : hasData ? "var(--color-text-info)" : "var(--color-text-tertiary)",
+                    fontWeight: hasData ? 500 : 400,
+                    opacity: hasData ? 1 : 0.4,
+                    position: "relative"
+                  }}
+                  title={hasData ? `Ver ${dayValue}` : "Sin datos"}
+                >
+                  {d}
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ marginTop: 10, paddingTop: 10, borderTop: "0.5px solid var(--color-border-tertiary)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontSize: 11, color: "var(--color-text-tertiary)", display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 3, background: "var(--color-background-info)", display: "inline-block" }} />
+              Con datos
+            </div>
+            <button
+              onClick={() => { onSelect(""); setOpen(false); }}
+              style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, border: "0.5px solid var(--color-border-tertiary)", background: "transparent", color: "var(--color-text-secondary)", cursor: "pointer" }}
+            >
+              Todos los dias
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -557,7 +797,22 @@ export default function App() {
   const [selectedDay, setSelectedDay] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [detailEntry, setDetailEntry] = useState(null);
+  const [savedFiles, setSavedFiles] = useState([]);
+  const [currentFileName, setCurrentFileName] = useState("");
   const fileRef = useRef();
+
+  const refreshSavedFiles = useCallback(async () => {
+    try {
+      const files = await getAllFilesFromDB();
+      setSavedFiles(files);
+    } catch (e) {
+      console.error("Error cargando archivos:", e);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshSavedFiles();
+  }, [refreshSavedFiles]);
 
   const filteredStations = useMemo(() => {
     if (!data) return [];
@@ -589,12 +844,46 @@ export default function App() {
         setError(result.error);
       } else {
         setData(result);
+        setCurrentFileName(file.name);
+        try {
+          await saveFileToDB(file.name, result, rows.length);
+          await refreshSavedFiles();
+        } catch (saveErr) {
+          console.error("No se pudo guardar:", saveErr);
+        }
       }
     } catch (e) {
       setError(`Error al procesar: ${e.message}`);
     }
     setLoading(false);
+  }, [refreshSavedFiles]);
+
+  const handleLoadSaved = useCallback(async (id) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const file = await getFileFromDB(id);
+      if (file) {
+        setData(file.processedData);
+        setCurrentFileName(file.name);
+        setDetailEntry(null);
+      }
+    } catch (e) {
+      setError(`Error al cargar archivo guardado: ${e.message}`);
+    }
+    setLoading(false);
   }, []);
+
+  const handleDeleteSaved = useCallback(async (id, name, e) => {
+    e.stopPropagation();
+    if (!confirm(`Eliminar "${name}" del historial?`)) return;
+    try {
+      await deleteFileFromDB(id);
+      await refreshSavedFiles();
+    } catch (err) {
+      setError(`Error al eliminar: ${err.message}`);
+    }
+  }, [refreshSavedFiles]);
 
   const handleDrop = useCallback((e) => {
     e.preventDefault();
@@ -640,6 +929,60 @@ export default function App() {
         </div>
       )}
 
+      {!data && !loading && savedFiles.length > 0 && (
+        <div style={{ marginTop: 24 }}>
+          <div style={{ fontSize: 14, fontWeight: 500, color: "var(--color-text-secondary)", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Archivos guardados ({savedFiles.length})
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
+            {savedFiles.map(file => (
+              <div key={file.id}
+                onClick={() => handleLoadSaved(file.id)}
+                style={{
+                  background: "var(--color-background-primary)",
+                  border: "0.5px solid var(--color-border-tertiary)",
+                  borderRadius: 12, padding: "14px 16px", cursor: "pointer",
+                  transition: "all 0.15s", position: "relative"
+                }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--color-border-secondary)"; e.currentTarget.style.background = "var(--color-background-secondary)"; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--color-border-tertiary)"; e.currentTarget.style.background = "var(--color-background-primary)"; }}
+              >
+                <button
+                  onClick={(e) => handleDeleteSaved(file.id, file.name, e)}
+                  style={{
+                    position: "absolute", top: 8, right: 8, background: "transparent",
+                    border: "none", cursor: "pointer", color: "var(--color-text-tertiary)",
+                    fontSize: 18, padding: "2px 8px", borderRadius: 4, lineHeight: 1
+                  }}
+                  title="Eliminar"
+                  onMouseEnter={e => e.currentTarget.style.color = "#E24B4A"}
+                  onMouseLeave={e => e.currentTarget.style.color = "var(--color-text-tertiary)"}
+                >×</button>
+                <div style={{ fontSize: 14, fontWeight: 500, color: "var(--color-text-primary)", marginBottom: 6, paddingRight: 24, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={file.name}>
+                  {file.name}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--color-text-tertiary)", marginBottom: 8 }}>
+                  {fmtRelativeDate(file.uploadedAt)}
+                </div>
+                <div style={{ display: "flex", gap: 12, fontSize: 11, color: "var(--color-text-secondary)" }}>
+                  <span><strong style={{ color: "var(--color-text-primary)", fontWeight: 500 }}>{file.rowCount?.toLocaleString() || "?"}</strong> registros</span>
+                  <span><strong style={{ color: "var(--color-text-primary)", fontWeight: 500 }}>{file.stationCount}</strong> estaciones</span>
+                  <span><strong style={{ color: "var(--color-text-primary)", fontWeight: 500 }}>{file.dayCount}</strong> dias</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--color-text-tertiary)", marginTop: 12, textAlign: "center" }}>
+            Los archivos se guardan localmente en tu navegador. Nunca salen de tu computadora.
+          </div>
+        </div>
+      )}
+
       {loading && (
         <div style={{ textAlign: "center", padding: 48 }}>
           <div style={{ fontSize: 16, color: "var(--color-text-secondary)" }}>Procesando datos...</div>
@@ -655,6 +998,16 @@ export default function App() {
 
       {data && (
         <>
+          {currentFileName && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, fontSize: 12, color: "var(--color-text-secondary)" }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+              </svg>
+              <span style={{ fontWeight: 500, color: "var(--color-text-primary)" }}>{currentFileName}</span>
+              <span style={{ color: "var(--color-text-tertiary)" }}>— guardado automaticamente</span>
+            </div>
+          )}
           <SummaryStats data={data} />
 
           <div style={{ position: "relative", marginBottom: 12 }}>
@@ -701,11 +1054,11 @@ export default function App() {
               {filteredStations.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
 
-            <select value={selectedDay} onChange={e => { setSelectedDay(e.target.value); setDetailEntry(null); }}
-              style={{ fontSize: 13, padding: "6px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-primary)", color: "var(--color-text-primary)", minWidth: 140 }}>
-              <option value="">Todos los dias</option>
-              {data.days.map(d => <option key={d} value={d}>{d}</option>)}
-            </select>
+            <CalendarPicker
+              availableDays={data.days}
+              selectedDay={selectedDay}
+              onSelect={(d) => { setSelectedDay(d); setDetailEntry(null); }}
+            />
 
             <div style={{ flex: 1 }} />
 
@@ -720,7 +1073,7 @@ export default function App() {
               ))}
             </div>
 
-            <button onClick={() => { setData(null); setSelectedStation(""); setSelectedDay(""); setSearchTerm(""); setDetailEntry(null); setError(null); }}
+            <button onClick={() => { setData(null); setSelectedStation(""); setSelectedDay(""); setSearchTerm(""); setDetailEntry(null); setError(null); setCurrentFileName(""); }}
               style={{ fontSize: 12, padding: "5px 14px", borderRadius: 6, border: "0.5px solid var(--color-border-tertiary)", background: "transparent", color: "var(--color-text-secondary)", cursor: "pointer" }}>
               Cargar otro archivo
             </button>
