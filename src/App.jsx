@@ -1010,36 +1010,40 @@ export default function App() {
           )}
           <SummaryStats data={data} />
 
-          <div style={{ position: "relative", marginBottom: 12 }}>
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={e => { setSearchTerm(e.target.value); setDetailEntry(null); }}
-              placeholder="Buscar estacion (ej: PTY, DAV, MIA...)"
-              style={{
-                width: "100%", fontSize: 14, padding: "10px 14px 10px 38px",
-                borderRadius: 10, border: "0.5px solid var(--color-border-tertiary)",
-                background: "var(--color-background-primary)", color: "var(--color-text-primary)",
-                outline: "none", boxSizing: "border-box"
-              }}
-            />
-            <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "var(--color-text-tertiary)", pointerEvents: "none" }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="11" cy="11" r="8"/>
-                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-              </svg>
-            </div>
-            {searchTerm && (
-              <button
-                onClick={() => setSearchTerm("")}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+              <div style={{ position: "absolute", left: 14, display: "flex", alignItems: "center", color: "var(--color-text-tertiary)", pointerEvents: "none" }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="11" cy="11" r="8"/>
+                  <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+              </div>
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={e => { setSearchTerm(e.target.value); setDetailEntry(null); }}
+                placeholder="Buscar estacion (ej: PTY, DAV, MIA...)"
                 style={{
-                  position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
-                  background: "transparent", border: "none", cursor: "pointer",
-                  color: "var(--color-text-tertiary)", fontSize: 18, padding: "4px 8px"
+                  width: "100%", fontSize: 14, lineHeight: "20px",
+                  padding: "10px 38px 10px 38px", margin: 0,
+                  borderRadius: 10, border: "0.5px solid var(--color-border-tertiary)",
+                  background: "var(--color-background-primary)", color: "var(--color-text-primary)",
+                  outline: "none", boxSizing: "border-box", fontFamily: "inherit"
                 }}
-                title="Limpiar busqueda"
-              >×</button>
-            )}
+              />
+              {searchTerm && (
+                <button
+                  onClick={() => setSearchTerm("")}
+                  style={{
+                    position: "absolute", right: 8, background: "transparent",
+                    border: "none", cursor: "pointer", color: "var(--color-text-tertiary)",
+                    fontSize: 20, padding: "4px 10px", lineHeight: 1, display: "flex",
+                    alignItems: "center", justifyContent: "center"
+                  }}
+                  title="Limpiar busqueda"
+                >×</button>
+              )}
+            </div>
             {searchTerm && (
               <div style={{ fontSize: 11, color: "var(--color-text-tertiary)", marginTop: 6, marginLeft: 4 }}>
                 {filteredStations.length} estacion{filteredStations.length !== 1 ? "es" : ""} coinciden con "{searchTerm}"
