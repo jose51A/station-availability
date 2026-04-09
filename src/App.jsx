@@ -633,6 +633,491 @@ function HourlyView({ data, selectedStation, selectedDay }) {
   );
 }
 
+function getWeekKey(dayStr) {
+  const p = parseDayString(dayStr);
+  if (!p) return null;
+  const d = new Date(p.year, p.month, p.day);
+  const dayOfWeek = (d.getDay() + 6) % 7;
+  const monday = new Date(d);
+  monday.setDate(d.getDate() - dayOfWeek);
+  return `${monday.getFullYear()}-${(monday.getMonth() + 1).toString().padStart(2, "0")}-${monday.getDate().toString().padStart(2, "0")}`;
+}
+
+function OverviewView({ data, onNavigate, onSelectStation }) {
+  if (!data) return null;
+  const { results, stations, days, totalRows } = data;
+
+  const analytics = useMemo(() => {
+    const entries = Object.values(results);
+    if (entries.length === 0) return null;
+
+    const avgFreePerStation = {};
+    const flightsPerStation = {};
+    for (const sta of stations) {
+      const staEntries = entries.filter(e => e.station === sta);
+      const totalFree = staEntries.reduce((s, e) => s + e.totalFree, 0);
+      const totalFlights = staEntries.reduce((s, e) => s + e.flightCount, 0);
+      avgFreePerStation[sta] = staEntries.length > 0 ? totalFree / staEntries.length : 1440;
+      flightsPerStation[sta] = totalFlights;
+    }
+
+    const sortedByAvail = [...stations].sort((a, b) => avgFreePerStation[b] - avgFreePerStation[a]);
+    const sortedByFlights = [...stations].sort((a, b) => flightsPerStation[b] - flightsPerStation[a]);
+
+    const hourlyLoad = Array(24).fill(0);
+    for (const e of entries) {
+      for (const b of e.busy) {
+        const startH = Math.floor(b.start / 60);
+        const endH = Math.ceil(b.end / 60);
+        for (let h = startH; h < endH && h < 24; h++) hourlyLoad[h]++;
+      }
+    }
+    const maxLoad = Math.max(...hourlyLoad, 1);
+
+    const globalFreeMinutes = Array(1440).fill(0);
+    for (const e of entries) {
+      for (const f of e.free) {
+        for (let m = f.start; m < f.end; m++) globalFreeMinutes[m]++;
+      }
+    }
+    const totalStationDays = entries.length;
+    const freePercentByHour = Array(24).fill(0);
+    for (let h = 0; h < 24; h++) {
+      let sum = 0;
+      for (let m = h * 60; m < (h + 1) * 60; m++) sum += globalFreeMinutes[m];
+      freePercentByHour[h] = totalStationDays > 0 ? (sum / 60 / totalStationDays) * 100 : 0;
+    }
+
+    const totalFreeAll = entries.reduce((s, e) => s + e.totalFree, 0);
+    const avgFreeAll = totalFreeAll / entries.length;
+    const totalFlights = entries.reduce((s, e) => s + e.flightCount, 0);
+    const avgFlightsPerDay = days.length > 0 ? totalFlights / days.length : 0;
+
+    return {
+      avgFreeAll,
+      totalFlights,
+      avgFlightsPerDay,
+      topFree: sortedByAvail.slice(0, 5),
+      topBusy: sortedByAvail.slice(-5).reverse(),
+      busiestStations: sortedByFlights.slice(0, 5),
+      hourlyLoad,
+      maxLoad,
+      freePercentByHour,
+      avgFreePerStation,
+      flightsPerStation
+    };
+  }, [results, stations, days]);
+
+  if (!analytics) return <div style={{ padding: 24, textAlign: "center", color: "var(--color-text-tertiary)" }}>Sin datos para mostrar</div>;
+
+  const { avgFreeAll, totalFlights, avgFlightsPerDay, topFree, topBusy, busiestStations, hourlyLoad, maxLoad, freePercentByHour, avgFreePerStation, flightsPerStation } = analytics;
+
+  const peakHour = hourlyLoad.indexOf(maxLoad);
+  const quietHour = freePercentByHour.indexOf(Math.max(...freePercentByHour));
+
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 24 }}>
+        <div style={{ background: "var(--color-background-secondary)", borderRadius: 12, padding: "16px 18px" }}>
+          <div style={{ fontSize: 11, color: "var(--color-text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Disponibilidad promedio</div>
+          <div style={{ fontSize: 26, fontWeight: 500, color: "#639922", letterSpacing: "-0.02em" }}>{fmtDuration(Math.round(avgFreeAll))}</div>
+          <div style={{ fontSize: 11, color: "var(--color-text-tertiary)", marginTop: 2 }}>por estacion/dia</div>
+        </div>
+        <div style={{ background: "var(--color-background-secondary)", borderRadius: 12, padding: "16px 18px" }}>
+          <div style={{ fontSize: 11, color: "var(--color-text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Total de vuelos</div>
+          <div style={{ fontSize: 26, fontWeight: 500, color: "var(--color-text-primary)", letterSpacing: "-0.02em" }}>{totalFlights.toLocaleString()}</div>
+          <div style={{ fontSize: 11, color: "var(--color-text-tertiary)", marginTop: 2 }}>{Math.round(avgFlightsPerDay)} en promedio/dia</div>
+        </div>
+        <div style={{ background: "var(--color-background-secondary)", borderRadius: 12, padding: "16px 18px" }}>
+          <div style={{ fontSize: 11, color: "var(--color-text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Hora pico global</div>
+          <div style={{ fontSize: 26, fontWeight: 500, color: "#E24B4A", letterSpacing: "-0.02em" }}>{peakHour.toString().padStart(2, "0")}:00</div>
+          <div style={{ fontSize: 11, color: "var(--color-text-tertiary)", marginTop: 2 }}>mayor carga operativa</div>
+        </div>
+        <div style={{ background: "var(--color-background-secondary)", borderRadius: 12, padding: "16px 18px" }}>
+          <div style={{ fontSize: 11, color: "var(--color-text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Mejor hora global</div>
+          <div style={{ fontSize: 26, fontWeight: 500, color: "#185FA5", letterSpacing: "-0.02em" }}>{quietHour.toString().padStart(2, "0")}:00</div>
+          <div style={{ fontSize: 11, color: "var(--color-text-tertiary)", marginTop: 2 }}>mayor disponibilidad</div>
+        </div>
+      </div>
+
+      <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: "18px 20px", marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 14 }}>
+          <div style={{ fontSize: 14, fontWeight: 500 }}>Distribucion de carga por hora del dia</div>
+          <div style={{ fontSize: 11, color: "var(--color-text-tertiary)" }}>% de estaciones libres</div>
+        </div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 120, marginBottom: 6 }}>
+          {freePercentByHour.map((pct, h) => {
+            const height = Math.max(2, pct);
+            const isPeak = h === peakHour;
+            const isQuiet = h === quietHour;
+            return (
+              <div key={h} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                <div
+                  title={`${h.toString().padStart(2, "0")}:00 — ${Math.round(pct)}% libre`}
+                  style={{
+                    width: "100%", height: `${height}%`, minHeight: 2,
+                    background: isQuiet ? "#185FA5" : isPeak ? "#E24B4A" : "#639922",
+                    opacity: isQuiet || isPeak ? 1 : 0.55,
+                    borderRadius: "3px 3px 0 0", transition: "opacity 0.2s"
+                  }}
+                />
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", gap: 3, fontSize: 9, color: "var(--color-text-tertiary)", marginTop: 4 }}>
+          {freePercentByHour.map((_, h) => (
+            <div key={h} style={{ flex: 1, textAlign: "center" }}>{h % 3 === 0 ? h.toString().padStart(2, "0") : ""}</div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16, marginBottom: 16 }}>
+        <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: "18px 20px" }}>
+          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 12, color: "#639922", display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#639922", display: "inline-block" }} />
+            Mayor disponibilidad
+          </div>
+          {topFree.map((sta, i) => (
+            <div key={sta} onClick={() => onSelectStation(sta)}
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: i < topFree.length - 1 ? "0.5px solid var(--color-border-tertiary)" : "none", cursor: "pointer" }}
+              onMouseEnter={e => e.currentTarget.style.background = "var(--color-background-secondary)"}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", width: 14 }}>{i + 1}</span>
+                <span style={{ fontSize: 13, fontWeight: 500 }}>{sta}</span>
+              </div>
+              <span style={{ fontSize: 12, color: "#639922", fontWeight: 500 }}>{fmtDuration(Math.round(avgFreePerStation[sta]))}</span>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: "18px 20px" }}>
+          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 12, color: "#E24B4A", display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#E24B4A", display: "inline-block" }} />
+            Menor disponibilidad
+          </div>
+          {topBusy.map((sta, i) => (
+            <div key={sta} onClick={() => onSelectStation(sta)}
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: i < topBusy.length - 1 ? "0.5px solid var(--color-border-tertiary)" : "none", cursor: "pointer" }}
+              onMouseEnter={e => e.currentTarget.style.background = "var(--color-background-secondary)"}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", width: 14 }}>{i + 1}</span>
+                <span style={{ fontSize: 13, fontWeight: 500 }}>{sta}</span>
+              </div>
+              <span style={{ fontSize: 12, color: "#E24B4A", fontWeight: 500 }}>{fmtDuration(Math.round(avgFreePerStation[sta]))}</span>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: "18px 20px" }}>
+          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 12, color: "var(--color-text-primary)", display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--color-text-secondary)", display: "inline-block" }} />
+            Mayor trafico
+          </div>
+          {busiestStations.map((sta, i) => (
+            <div key={sta} onClick={() => onSelectStation(sta)}
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: i < busiestStations.length - 1 ? "0.5px solid var(--color-border-tertiary)" : "none", cursor: "pointer" }}
+              onMouseEnter={e => e.currentTarget.style.background = "var(--color-background-secondary)"}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", width: 14 }}>{i + 1}</span>
+                <span style={{ fontSize: 13, fontWeight: 500 }}>{sta}</span>
+              </div>
+              <span style={{ fontSize: 12, color: "var(--color-text-secondary)", fontWeight: 500 }}>{flightsPerStation[sta]} vuelos</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ background: "var(--color-background-secondary)", borderRadius: 12, padding: "14px 18px", fontSize: 12, color: "var(--color-text-secondary)", lineHeight: 1.6 }}>
+        Explora los detalles con las vistas:
+        <span onClick={() => onNavigate("heatmap")} style={{ color: "var(--color-text-info)", cursor: "pointer", fontWeight: 500, marginLeft: 6 }}>mapa de calor</span>
+        <span style={{ margin: "0 4px" }}>·</span>
+        <span onClick={() => onNavigate("compare")} style={{ color: "var(--color-text-info)", cursor: "pointer", fontWeight: 500 }}>comparar estaciones</span>
+        <span style={{ margin: "0 4px" }}>·</span>
+        <span onClick={() => onNavigate("hourly")} style={{ color: "var(--color-text-info)", cursor: "pointer", fontWeight: 500 }}>hora por hora</span>
+        <span style={{ margin: "0 4px" }}>·</span>
+        <span onClick={() => onNavigate("list")} style={{ color: "var(--color-text-info)", cursor: "pointer", fontWeight: 500 }}>lista completa</span>
+      </div>
+    </div>
+  );
+}
+
+function CompareView({ data, selectedStations, onToggleStation, onClearSelection, selectedDay, onDaySelect }) {
+  if (!data) return null;
+  const { results, stations, days } = data;
+  const [period, setPeriod] = useState("day");
+  const [stationSearch, setStationSearch] = useState("");
+  const MAX_SELECTION = 10;
+
+  const weeks = useMemo(() => {
+    const weekMap = new Map();
+    for (const d of days) {
+      const wk = getWeekKey(d);
+      if (!wk) continue;
+      if (!weekMap.has(wk)) weekMap.set(wk, []);
+      weekMap.get(wk).push(d);
+    }
+    return [...weekMap.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [days]);
+
+  const [selectedWeek, setSelectedWeek] = useState(() => weeks[0]?.[0] || "");
+
+  useEffect(() => {
+    if (period === "week" && !selectedWeek && weeks.length > 0) {
+      setSelectedWeek(weeks[0][0]);
+    }
+  }, [period, weeks, selectedWeek]);
+
+  const filteredList = useMemo(() => {
+    const term = stationSearch.trim().toUpperCase();
+    if (!term) return stations;
+    return stations.filter(s => s.includes(term));
+  }, [stations, stationSearch]);
+
+  const comparisonData = useMemo(() => {
+    if (selectedStations.length === 0) return [];
+
+    const targetDays = period === "day"
+      ? (selectedDay ? [selectedDay] : [days[0]])
+      : (weeks.find(w => w[0] === selectedWeek)?.[1] || []);
+
+    return selectedStations.map(sta => {
+      if (period === "day" && targetDays.length === 1) {
+        const entry = results[`${sta}|${targetDays[0]}`];
+        return {
+          station: sta,
+          label: targetDays[0],
+          busy: entry?.busy || [],
+          free: entry?.free || [{ start: 0, end: 1440 }],
+          totalFree: entry?.totalFree || 1440,
+          flightCount: entry?.flightCount || 0,
+          events: entry?.events || []
+        };
+      } else {
+        const busyMinutes = new Array(1440).fill(0);
+        let totalFlights = 0;
+        for (const d of targetDays) {
+          const entry = results[`${sta}|${d}`];
+          if (!entry) continue;
+          totalFlights += entry.flightCount;
+          for (const b of entry.busy) {
+            for (let m = b.start; m < b.end; m++) busyMinutes[m]++;
+          }
+        }
+        const avgBusy = [];
+        let curStart = null;
+        const threshold = targetDays.length / 2;
+        for (let m = 0; m < 1440; m++) {
+          if (busyMinutes[m] >= threshold) {
+            if (curStart === null) curStart = m;
+          } else {
+            if (curStart !== null) { avgBusy.push({ start: curStart, end: m }); curStart = null; }
+          }
+        }
+        if (curStart !== null) avgBusy.push({ start: curStart, end: 1440 });
+
+        const avgFree = [];
+        let cursor = 0;
+        for (const b of avgBusy) {
+          if (b.start > cursor) avgFree.push({ start: cursor, end: b.start });
+          cursor = b.end;
+        }
+        if (cursor < 1440) avgFree.push({ start: cursor, end: 1440 });
+
+        const totalFree = avgFree.reduce((s, f) => s + (f.end - f.start), 0);
+        return {
+          station: sta,
+          label: `Semana (${targetDays.length} dias)`,
+          busy: avgBusy,
+          free: avgFree,
+          totalFree,
+          flightCount: Math.round(totalFlights / Math.max(targetDays.length, 1)),
+          events: []
+        };
+      }
+    });
+  }, [selectedStations, period, selectedDay, selectedWeek, days, weeks, results]);
+
+  const commonFreeWindows = useMemo(() => {
+    if (comparisonData.length < 2) return [];
+    const minute = new Array(1440).fill(true);
+    for (const cd of comparisonData) {
+      const freeSet = new Array(1440).fill(false);
+      for (const f of cd.free) {
+        for (let m = f.start; m < f.end; m++) freeSet[m] = true;
+      }
+      for (let m = 0; m < 1440; m++) if (!freeSet[m]) minute[m] = false;
+    }
+    const windows = [];
+    let start = null;
+    for (let m = 0; m < 1440; m++) {
+      if (minute[m]) { if (start === null) start = m; }
+      else { if (start !== null) { windows.push({ start, end: m }); start = null; } }
+    }
+    if (start !== null) windows.push({ start, end: 1440 });
+    return windows.filter(w => w.end - w.start >= 15);
+  }, [comparisonData]);
+
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", gap: 16 }}>
+        <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: "14px 16px", height: "fit-content" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <div style={{ fontSize: 13, fontWeight: 500 }}>Estaciones</div>
+            <div style={{ fontSize: 11, color: selectedStations.length >= MAX_SELECTION ? "#E24B4A" : "var(--color-text-tertiary)" }}>
+              {selectedStations.length}/{MAX_SELECTION}
+            </div>
+          </div>
+          <input
+            type="text"
+            value={stationSearch}
+            onChange={e => setStationSearch(e.target.value)}
+            placeholder="Buscar..."
+            style={{
+              width: "100%", fontSize: 12, padding: "6px 10px", marginBottom: 8,
+              borderRadius: 6, border: "0.5px solid var(--color-border-tertiary)",
+              background: "var(--color-background-secondary)", color: "var(--color-text-primary)",
+              outline: "none", boxSizing: "border-box", fontFamily: "inherit"
+            }}
+          />
+          {selectedStations.length > 0 && (
+            <button
+              onClick={onClearSelection}
+              style={{ fontSize: 11, padding: "4px 10px", marginBottom: 8, borderRadius: 6, border: "0.5px solid var(--color-border-tertiary)", background: "transparent", color: "var(--color-text-secondary)", cursor: "pointer", width: "100%" }}
+            >
+              Limpiar seleccion
+            </button>
+          )}
+          <div style={{ maxHeight: 360, overflowY: "auto", marginTop: 4 }}>
+            {filteredList.map(sta => {
+              const isSelected = selectedStations.includes(sta);
+              const disabled = !isSelected && selectedStations.length >= MAX_SELECTION;
+              return (
+                <label key={sta}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 8, padding: "6px 8px",
+                    borderRadius: 6, cursor: disabled ? "not-allowed" : "pointer",
+                    opacity: disabled ? 0.4 : 1,
+                    background: isSelected ? "var(--color-background-info)" : "transparent"
+                  }}
+                  onMouseEnter={e => { if (!disabled && !isSelected) e.currentTarget.style.background = "var(--color-background-secondary)"; }}
+                  onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    disabled={disabled}
+                    onChange={() => onToggleStation(sta)}
+                    style={{ cursor: disabled ? "not-allowed" : "pointer", margin: 0 }}
+                  />
+                  <span style={{ fontSize: 12, fontWeight: isSelected ? 500 : 400, color: isSelected ? "var(--color-text-info)" : "var(--color-text-primary)" }}>{sta}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+
+        <div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 14, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 4, background: "var(--color-background-secondary)", borderRadius: 8, padding: 3 }}>
+              {[{ id: "day", label: "Por dia" }, { id: "week", label: "Por semana" }].map(p => (
+                <button key={p.id} onClick={() => setPeriod(p.id)} style={{
+                  fontSize: 12, padding: "5px 14px", borderRadius: 6, border: "none", cursor: "pointer",
+                  background: period === p.id ? "var(--color-background-primary)" : "transparent",
+                  color: period === p.id ? "var(--color-text-primary)" : "var(--color-text-secondary)",
+                  fontWeight: period === p.id ? 500 : 400
+                }}>{p.label}</button>
+              ))}
+            </div>
+            {period === "day" && (
+              <CalendarPicker
+                availableDays={days}
+                selectedDay={selectedDay || days[0]}
+                onSelect={onDaySelect}
+              />
+            )}
+            {period === "week" && weeks.length > 0 && (
+              <select
+                value={selectedWeek}
+                onChange={e => setSelectedWeek(e.target.value)}
+                style={{ fontSize: 13, padding: "6px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-primary)", color: "var(--color-text-primary)" }}
+              >
+                {weeks.map(([wk, wkDays]) => (
+                  <option key={wk} value={wk}>Semana del {wk} ({wkDays.length}d)</option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {selectedStations.length === 0 ? (
+            <div style={{ padding: 40, textAlign: "center", color: "var(--color-text-tertiary)", background: "var(--color-background-secondary)", borderRadius: 12 }}>
+              <div style={{ fontSize: 14, marginBottom: 4 }}>Selecciona hasta {MAX_SELECTION} estaciones</div>
+              <div style={{ fontSize: 12 }}>del listado de la izquierda para comparar</div>
+            </div>
+          ) : (
+            <>
+              {commonFreeWindows.length > 0 && (
+                <div style={{ background: "var(--color-background-primary)", border: "0.5px solid #639922", borderRadius: 12, padding: "14px 18px", marginBottom: 14 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: "#3B6D11", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#639922", display: "inline-block" }} />
+                    Ventanas comunes libres
+                    <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", fontWeight: 400, marginLeft: 4 }}>
+                      (todas las estaciones seleccionadas disponibles)
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {commonFreeWindows.map((w, i) => (
+                      <div key={i} style={{
+                        padding: "6px 12px", background: "#EAF3DE", color: "#3B6D11",
+                        borderRadius: 6, fontSize: 12, fontWeight: 500
+                      }}>
+                        {fmtTime(w.start)} – {fmtTime(w.end)}
+                        <span style={{ color: "#639922", marginLeft: 6, fontWeight: 400 }}>({fmtDuration(w.end - w.start)})</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: "16px 18px" }}>
+                {comparisonData.map((cd, i) => (
+                  <div key={cd.station} style={{ marginBottom: i < comparisonData.length - 1 ? 14 : 0 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+                        <span style={{ fontSize: 14, fontWeight: 500 }}>{cd.station}</span>
+                        <span style={{ fontSize: 11, color: "var(--color-text-tertiary)" }}>{cd.label}</span>
+                      </div>
+                      <div style={{ display: "flex", gap: 14, fontSize: 11 }}>
+                        <span style={{ color: "var(--color-text-secondary)" }}>
+                          <strong style={{ color: "var(--color-text-primary)", fontWeight: 500 }}>{cd.flightCount}</strong> vuelos
+                        </span>
+                        <span style={{ color: "#639922", fontWeight: 500 }}>{fmtDuration(cd.totalFree)} libre</span>
+                      </div>
+                    </div>
+                    <TimelineBar busy={cd.busy} free={cd.free} />
+                    {i === 0 && (
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--color-text-tertiary)", marginTop: 2, padding: "0 1px" }}>
+                        {["00", "03", "06", "09", "12", "15", "18", "21", "24"].map(h => <span key={h}>{h}:00</span>)}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 function parseDayString(dayStr) {
   if (!dayStr) return null;
   const s = String(dayStr).trim();
@@ -645,6 +1130,271 @@ function parseDayString(dayStr) {
   const d = new Date(s);
   if (!isNaN(d)) return { year: d.getFullYear(), month: d.getMonth(), day: d.getDate() };
   return null;
+}
+
+function StationFocusView({ data, selectedStation, selectedDay }) {
+  if (!data) return null;
+  const { results, days } = data;
+
+  if (!selectedStation) {
+    return (
+      <div style={{
+        padding: "60px 24px", textAlign: "center",
+        background: "var(--color-background-secondary)", borderRadius: 16,
+        border: "1px dashed var(--color-border-tertiary)"
+      }}>
+        <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 56, height: 56, borderRadius: "50%", background: "var(--color-background-primary)", marginBottom: 16, border: "0.5px solid var(--color-border-tertiary)" }}>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--color-text-tertiary)" }}>
+            <circle cx="11" cy="11" r="8"/>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+        </div>
+        <div style={{ fontSize: 16, fontWeight: 500, color: "var(--color-text-primary)", marginBottom: 6 }}>
+          Selecciona una estacion
+        </div>
+        <div style={{ fontSize: 13, color: "var(--color-text-secondary)", maxWidth: 380, margin: "0 auto", lineHeight: 1.6 }}>
+          Usa el buscador o el selector de arriba para elegir una estacion y ver su disponibilidad detallada.
+        </div>
+      </div>
+    );
+  }
+
+  const analysis = useMemo(() => {
+    const targetDays = selectedDay ? [selectedDay] : days;
+    const entries = targetDays.map(d => results[`${selectedStation}|${d}`]).filter(Boolean);
+
+    if (entries.length === 0) {
+      return { noData: true, targetDays };
+    }
+
+    if (entries.length === 1) {
+      const e = entries[0];
+      const longestFree = e.free.reduce((max, f) => (f.end - f.start > (max ? max.end - max.start : 0) ? f : max), null);
+      const peakEvents = [...e.events].sort((a, b) => a.time - b.time);
+
+      let morning = 0, afternoon = 0, night = 0;
+      for (const f of e.free) {
+        const clip = (s, en) => Math.max(0, Math.min(f.end, en) - Math.max(f.start, s));
+        morning += clip(360, 720);
+        afternoon += clip(720, 1080);
+        night += clip(1080, 1440);
+      }
+
+      return {
+        mode: "day",
+        day: targetDays[0],
+        busy: e.busy,
+        free: e.free,
+        events: peakEvents,
+        totalFree: e.totalFree,
+        longestFree,
+        flightCount: e.flightCount,
+        morning, afternoon, night
+      };
+    }
+
+    const busyMinutes = new Array(1440).fill(0);
+    let totalFlights = 0;
+    for (const e of entries) {
+      totalFlights += e.flightCount;
+      for (const b of e.busy) {
+        for (let m = b.start; m < b.end; m++) busyMinutes[m]++;
+      }
+    }
+    const threshold = entries.length / 2;
+    const avgBusy = [];
+    let curStart = null;
+    for (let m = 0; m < 1440; m++) {
+      if (busyMinutes[m] >= threshold) {
+        if (curStart === null) curStart = m;
+      } else {
+        if (curStart !== null) { avgBusy.push({ start: curStart, end: m }); curStart = null; }
+      }
+    }
+    if (curStart !== null) avgBusy.push({ start: curStart, end: 1440 });
+
+    const avgFree = [];
+    let cursor = 0;
+    for (const b of avgBusy) {
+      if (b.start > cursor) avgFree.push({ start: cursor, end: b.start });
+      cursor = b.end;
+    }
+    if (cursor < 1440) avgFree.push({ start: cursor, end: 1440 });
+    const totalFree = avgFree.reduce((s, f) => s + (f.end - f.start), 0);
+    const longestFree = avgFree.reduce((max, f) => (f.end - f.start > (max ? max.end - max.start : 0) ? f : max), null);
+
+    let morning = 0, afternoon = 0, night = 0;
+    for (const f of avgFree) {
+      const clip = (s, en) => Math.max(0, Math.min(f.end, en) - Math.max(f.start, s));
+      morning += clip(360, 720);
+      afternoon += clip(720, 1080);
+      night += clip(1080, 1440);
+    }
+
+    return {
+      mode: "range",
+      daysCount: entries.length,
+      busy: avgBusy,
+      free: avgFree,
+      totalFree,
+      longestFree,
+      flightCount: Math.round(totalFlights / entries.length),
+      morning, afternoon, night
+    };
+  }, [selectedStation, selectedDay, days, results]);
+
+  if (analysis.noData) {
+    return (
+      <div style={{
+        padding: "48px 24px", textAlign: "center",
+        background: "var(--color-background-secondary)", borderRadius: 16
+      }}>
+        <div style={{ fontSize: 15, fontWeight: 500, color: "var(--color-text-primary)", marginBottom: 6 }}>
+          Sin datos para {selectedStation}
+        </div>
+        <div style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>
+          {selectedDay ? `No hay vuelos registrados el ${selectedDay}` : "Esta estacion no tiene vuelos registrados"}
+        </div>
+      </div>
+    );
+  }
+
+  const { mode, day, daysCount, busy, free, events, totalFree, longestFree, flightCount, morning, afternoon, night } = analysis;
+
+  const topWindows = [...free].sort((a, b) => (b.end - b.start) - (a.end - a.start)).slice(0, 6);
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 4 }}>
+        <h2 style={{ fontSize: 22, fontWeight: 500, color: "var(--color-text-primary)", letterSpacing: "-0.02em", margin: 0 }}>
+          Estacion {selectedStation}
+        </h2>
+        <span style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>
+          {mode === "day" ? day : `promedio de ${daysCount} dias`}
+        </span>
+      </div>
+      <div style={{ fontSize: 13, color: "var(--color-text-secondary)", marginBottom: 20 }}>
+        {flightCount} vuelo{flightCount !== 1 ? "s" : ""} {mode === "day" ? "el dia seleccionado" : "en promedio por dia"} · disponibilidad total de <strong style={{ color: "#639922", fontWeight: 500 }}>{fmtDuration(totalFree)}</strong>
+      </div>
+
+      <div style={{ marginBottom: 18 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#639922", display: "inline-block" }} />
+          <span style={{ fontSize: 14, fontWeight: 500, color: "#3B6D11" }}>Ventanas disponibles</span>
+          <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", marginLeft: 4 }}>
+            {mode === "day" ? "(libres de operaciones)" : "(promedio del periodo)"}
+          </span>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+          {topWindows.map((w, i) => {
+            const dur = w.end - w.start;
+            const isLongest = longestFree && w.start === longestFree.start && w.end === longestFree.end;
+            return (
+              <div key={i} style={{
+                padding: "10px 16px",
+                background: isLongest ? "#C0DD97" : "#EAF3DE",
+                border: isLongest ? "1px solid #639922" : "0.5px solid #C0DD97",
+                borderRadius: 10,
+                color: "#27500A",
+                fontSize: 13,
+                fontWeight: 500,
+                display: "flex",
+                flexDirection: "column",
+                gap: 2,
+                minWidth: 140
+              }}>
+                <div>{fmtTime(w.start)} – {fmtTime(w.end)}</div>
+                <div style={{ fontSize: 11, color: "#3B6D11", fontWeight: 400 }}>
+                  {fmtDuration(dur)}{isLongest ? " · ventana mas larga" : ""}
+                </div>
+              </div>
+            );
+          })}
+          {topWindows.length === 0 && (
+            <div style={{ fontSize: 13, color: "var(--color-text-tertiary)", fontStyle: "italic", padding: "8px 0" }}>
+              Esta estacion no tiene ventanas libres en el periodo seleccionado.
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{ marginBottom: 18 }}>
+        <div style={{ fontSize: 13, fontWeight: 500, color: "var(--color-text-secondary)", marginBottom: 8 }}>
+          Linea de tiempo del dia
+        </div>
+        <TimelineBar busy={busy} free={free} />
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--color-text-tertiary)", marginTop: 4, padding: "0 1px" }}>
+          {["00:00", "03:00", "06:00", "09:00", "12:00", "15:00", "18:00", "21:00", "24:00"].map(h => <span key={h}>{h}</span>)}
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 18 }}>
+        <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, padding: "12px 14px" }}>
+          <div style={{ fontSize: 10, color: "var(--color-text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Manana</div>
+          <div style={{ fontSize: 16, fontWeight: 500, color: "var(--color-text-primary)" }}>{fmtDuration(Math.round(morning))}</div>
+          <div style={{ fontSize: 10, color: "var(--color-text-tertiary)", marginTop: 2 }}>06:00 – 12:00</div>
+        </div>
+        <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, padding: "12px 14px" }}>
+          <div style={{ fontSize: 10, color: "var(--color-text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Tarde</div>
+          <div style={{ fontSize: 16, fontWeight: 500, color: "var(--color-text-primary)" }}>{fmtDuration(Math.round(afternoon))}</div>
+          <div style={{ fontSize: 10, color: "var(--color-text-tertiary)", marginTop: 2 }}>12:00 – 18:00</div>
+        </div>
+        <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, padding: "12px 14px" }}>
+          <div style={{ fontSize: 10, color: "var(--color-text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Noche</div>
+          <div style={{ fontSize: 16, fontWeight: 500, color: "var(--color-text-primary)" }}>{fmtDuration(Math.round(night))}</div>
+          <div style={{ fontSize: 10, color: "var(--color-text-tertiary)", marginTop: 2 }}>18:00 – 24:00</div>
+        </div>
+        <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 10, padding: "12px 14px" }}>
+          <div style={{ fontSize: 10, color: "var(--color-text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Ventana mas larga</div>
+          <div style={{ fontSize: 16, fontWeight: 500, color: "#639922" }}>{longestFree ? fmtDuration(longestFree.end - longestFree.start) : "—"}</div>
+          <div style={{ fontSize: 10, color: "var(--color-text-tertiary)", marginTop: 2 }}>
+            {longestFree ? `${fmtTime(longestFree.start)} – ${fmtTime(longestFree.end)}` : "sin datos"}
+          </div>
+        </div>
+      </div>
+
+      {mode === "day" && events && events.length > 0 && (
+        <details style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12 }}>
+          <summary style={{
+            padding: "12px 18px", cursor: "pointer", fontSize: 13, fontWeight: 500,
+            color: "var(--color-text-secondary)", display: "flex", alignItems: "center",
+            justifyContent: "space-between", listStyle: "none", userSelect: "none"
+          }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transition: "transform 0.2s" }} className="chevron">
+                <polyline points="9 18 15 12 9 6"/>
+              </svg>
+              Vuelos del dia
+            </span>
+            <span style={{ fontSize: 11, color: "var(--color-text-tertiary)", fontWeight: 400 }}>
+              {events.length} vuelo{events.length !== 1 ? "s" : ""}
+            </span>
+          </summary>
+          <div style={{ padding: "4px 18px 14px", borderTop: "0.5px solid var(--color-border-tertiary)" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8, paddingTop: 10 }}>
+              {events.map((ev, i) => (
+                <div key={i} style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>
+                  <span style={{
+                    fontSize: 9, fontWeight: 500, padding: "2px 6px", borderRadius: 4,
+                    background: ev.type === "DEP" ? "#FCEBEB" : "#E1F5EE",
+                    color: ev.type === "DEP" ? "#A32D2D" : "#0F6E56"
+                  }}>
+                    {ev.type === "DEP" ? "SAL" : "LLE"}
+                  </span>
+                  <span style={{ color: "var(--color-text-primary)", fontWeight: 500 }}>{fmtTime(ev.time)}</span>
+                  <span style={{ color: "var(--color-text-tertiary)" }}>Flt {ev.flt}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <style>{`
+            details[open] .chevron { transform: rotate(90deg); }
+            summary::-webkit-details-marker { display: none; }
+          `}</style>
+        </details>
+      )}
+    </div>
+  );
 }
 
 function CalendarPicker({ availableDays, selectedDay, onSelect }) {
@@ -792,13 +1542,16 @@ export default function App() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [view, setView] = useState("heatmap");
+  const [view, setView] = useState("station");
   const [selectedStation, setSelectedStation] = useState("");
   const [selectedDay, setSelectedDay] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [detailEntry, setDetailEntry] = useState(null);
   const [savedFiles, setSavedFiles] = useState([]);
   const [currentFileName, setCurrentFileName] = useState("");
+  const [compareStations, setCompareStations] = useState([]);
+  const [showSearchDropdown, setShowSearchDropdown] = useState(false);
+  const searchBarRef = useRef(null);
   const fileRef = useRef();
 
   const refreshSavedFiles = useCallback(async () => {
@@ -813,6 +1566,17 @@ export default function App() {
   useEffect(() => {
     refreshSavedFiles();
   }, [refreshSavedFiles]);
+
+  useEffect(() => {
+    if (!showSearchDropdown) return;
+    const onClickOutside = (e) => {
+      if (searchBarRef.current && !searchBarRef.current.contains(e.target)) {
+        setShowSearchDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [showSearchDropdown]);
 
   const filteredStations = useMemo(() => {
     if (!data) return [];
@@ -845,6 +1609,8 @@ export default function App() {
       } else {
         setData(result);
         setCurrentFileName(file.name);
+        setView("station");
+        setCompareStations([]);
         try {
           await saveFileToDB(file.name, result, rows.length);
           await refreshSavedFiles();
@@ -867,6 +1633,8 @@ export default function App() {
         setData(file.processedData);
         setCurrentFileName(file.name);
         setDetailEntry(null);
+        setView("station");
+        setCompareStations([]);
       }
     } catch (e) {
       setError(`Error al cargar archivo guardado: ${e.message}`);
@@ -884,6 +1652,21 @@ export default function App() {
       setError(`Error al eliminar: ${err.message}`);
     }
   }, [refreshSavedFiles]);
+
+  const handleToggleCompareStation = useCallback((sta) => {
+    setCompareStations(prev => {
+      if (prev.includes(sta)) return prev.filter(s => s !== sta);
+      if (prev.length >= 10) return prev;
+      return [...prev, sta];
+    });
+  }, []);
+
+  const handleClearCompare = useCallback(() => setCompareStations([]), []);
+
+  const handleOverviewSelectStation = useCallback((sta) => {
+    setSelectedStation(sta);
+    setView("heatmap");
+  }, []);
 
   const handleDrop = useCallback((e) => {
     e.preventDefault();
@@ -1008,9 +1791,10 @@ export default function App() {
               <span style={{ color: "var(--color-text-tertiary)" }}>— guardado automaticamente</span>
             </div>
           )}
-          <SummaryStats data={data} />
+          {view !== "overview" && view !== "compare" && view !== "station" && <SummaryStats data={data} />}
 
-          <div style={{ marginBottom: 12 }}>
+          {view !== "overview" && view !== "compare" && (
+          <div style={{ marginBottom: 12 }} ref={searchBarRef}>
             <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
               <div style={{ position: "absolute", left: 14, display: "flex", alignItems: "center", color: "var(--color-text-tertiary)", pointerEvents: "none" }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1021,7 +1805,8 @@ export default function App() {
               <input
                 type="text"
                 value={searchTerm}
-                onChange={e => { setSearchTerm(e.target.value); setDetailEntry(null); }}
+                onChange={e => { setSearchTerm(e.target.value); setDetailEntry(null); setShowSearchDropdown(true); }}
+                onFocus={() => setShowSearchDropdown(true)}
                 placeholder="Buscar estacion (ej: PTY, DAV, MIA...)"
                 style={{
                   width: "100%", fontSize: 14, lineHeight: "20px",
@@ -1033,7 +1818,7 @@ export default function App() {
               />
               {searchTerm && (
                 <button
-                  onClick={() => setSearchTerm("")}
+                  onClick={() => { setSearchTerm(""); setShowSearchDropdown(false); }}
                   style={{
                     position: "absolute", right: 8, background: "transparent",
                     border: "none", cursor: "pointer", color: "var(--color-text-tertiary)",
@@ -1043,31 +1828,105 @@ export default function App() {
                   title="Limpiar busqueda"
                 >×</button>
               )}
+
+              {showSearchDropdown && searchTerm.trim() && (
+                <div style={{
+                  position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 50,
+                  background: "var(--color-background-primary)",
+                  border: "0.5px solid var(--color-border-secondary)",
+                  borderRadius: 10, maxHeight: 320, overflowY: "auto",
+                  boxShadow: "0 4px 16px rgba(0,0,0,0.1)"
+                }}>
+                  {filteredStations.length === 0 ? (
+                    <div style={{ padding: "14px 16px", fontSize: 13, color: "var(--color-text-tertiary)", textAlign: "center" }}>
+                      No se encontraron estaciones con "{searchTerm}"
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ padding: "8px 14px 4px", fontSize: 10, color: "var(--color-text-tertiary)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                        {filteredStations.length} coincidencia{filteredStations.length !== 1 ? "s" : ""}
+                      </div>
+                      {filteredStations.slice(0, 50).map(sta => {
+                        const term = searchTerm.trim().toUpperCase();
+                        const idx = sta.indexOf(term);
+                        const before = sta.slice(0, idx);
+                        const match = sta.slice(idx, idx + term.length);
+                        const after = sta.slice(idx + term.length);
+                        const isSelected = selectedStation === sta;
+                        return (
+                          <div
+                            key={sta}
+                            onClick={() => {
+                              setSelectedStation(sta);
+                              setSearchTerm("");
+                              setShowSearchDropdown(false);
+                              setDetailEntry(null);
+                            }}
+                            style={{
+                              padding: "10px 16px", cursor: "pointer", fontSize: 14,
+                              borderTop: "0.5px solid var(--color-border-tertiary)",
+                              background: isSelected ? "var(--color-background-info)" : "transparent",
+                              display: "flex", alignItems: "center", gap: 10,
+                              transition: "background 0.1s"
+                            }}
+                            onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = "var(--color-background-secondary)"; }}
+                            onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--color-text-tertiary)", flexShrink: 0 }}>
+                              <path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>
+                            </svg>
+                            <span style={{ fontWeight: 500, color: "var(--color-text-primary)" }}>
+                              {before}
+                              <span style={{ background: "#FAC775", color: "#633806", padding: "0 2px", borderRadius: 2 }}>{match}</span>
+                              {after}
+                            </span>
+                            {isSelected && (
+                              <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--color-text-info)", fontWeight: 500 }}>SELECCIONADA</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {filteredStations.length > 50 && (
+                        <div style={{ padding: "8px 14px", fontSize: 11, color: "var(--color-text-tertiary)", borderTop: "0.5px solid var(--color-border-tertiary)", textAlign: "center" }}>
+                          Mostrando 50 de {filteredStations.length}. Afina tu busqueda.
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
             </div>
-            {searchTerm && (
-              <div style={{ fontSize: 11, color: "var(--color-text-tertiary)", marginTop: 6, marginLeft: 4 }}>
-                {filteredStations.length} estacion{filteredStations.length !== 1 ? "es" : ""} coinciden con "{searchTerm}"
-              </div>
-            )}
           </div>
+          )}
 
           <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
-            <select value={selectedStation} onChange={e => { setSelectedStation(e.target.value); setDetailEntry(null); }}
-              style={{ fontSize: 13, padding: "6px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-primary)", color: "var(--color-text-primary)", minWidth: 120 }}>
-              <option value="">Todas las estaciones ({filteredStations.length})</option>
-              {filteredStations.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
+            {view !== "overview" && view !== "compare" && (
+              <>
+                <select value={selectedStation} onChange={e => { setSelectedStation(e.target.value); setDetailEntry(null); }}
+                  style={{ fontSize: 13, padding: "6px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-primary)", color: "var(--color-text-primary)", minWidth: 120 }}>
+                  <option value="">Todas las estaciones ({filteredStations.length})</option>
+                  {filteredStations.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
 
-            <CalendarPicker
-              availableDays={data.days}
-              selectedDay={selectedDay}
-              onSelect={(d) => { setSelectedDay(d); setDetailEntry(null); }}
-            />
+                <CalendarPicker
+                  availableDays={data.days}
+                  selectedDay={selectedDay}
+                  onSelect={(d) => { setSelectedDay(d); setDetailEntry(null); }}
+                />
+              </>
+            )}
 
             <div style={{ flex: 1 }} />
 
-            <div style={{ display: "flex", gap: 4, background: "var(--color-background-secondary)", borderRadius: 8, padding: 3 }}>
-              {[{ id: "heatmap", label: "Mapa de calor" }, { id: "hourly", label: "Hora por hora" }, { id: "list", label: "Lista" }].map(v => (
+            <div style={{ display: "flex", gap: 4, background: "var(--color-background-secondary)", borderRadius: 8, padding: 3, flexWrap: "wrap" }}>
+              {[
+                { id: "station", label: "Estacion" },
+                { id: "overview", label: "Resumen" },
+                { id: "compare", label: "Comparar" },
+                { id: "heatmap", label: "Mapa de calor" },
+                { id: "hourly", label: "Hora por hora" },
+                { id: "list", label: "Lista" }
+              ].map(v => (
                 <button key={v.id} onClick={() => setView(v.id)} style={{
                   fontSize: 12, padding: "5px 14px", borderRadius: 6, border: "none", cursor: "pointer",
                   background: view === v.id ? "var(--color-background-primary)" : "transparent",
@@ -1077,7 +1936,7 @@ export default function App() {
               ))}
             </div>
 
-            <button onClick={() => { setData(null); setSelectedStation(""); setSelectedDay(""); setSearchTerm(""); setDetailEntry(null); setError(null); setCurrentFileName(""); }}
+            <button onClick={() => { setData(null); setSelectedStation(""); setSelectedDay(""); setSearchTerm(""); setDetailEntry(null); setError(null); setCurrentFileName(""); setCompareStations([]); setView("station"); }}
               style={{ fontSize: 12, padding: "5px 14px", borderRadius: 6, border: "0.5px solid var(--color-border-tertiary)", background: "transparent", color: "var(--color-text-secondary)", cursor: "pointer" }}>
               Cargar otro archivo
             </button>
@@ -1085,6 +1944,30 @@ export default function App() {
 
           {detailEntry && <StationDetail data={detailEntry} />}
 
+          {view === "station" && (
+            <StationFocusView
+              data={data}
+              selectedStation={selectedStation}
+              selectedDay={selectedDay}
+            />
+          )}
+          {view === "overview" && (
+            <OverviewView
+              data={data}
+              onNavigate={(v) => setView(v)}
+              onSelectStation={handleOverviewSelectStation}
+            />
+          )}
+          {view === "compare" && (
+            <CompareView
+              data={data}
+              selectedStations={compareStations}
+              onToggleStation={handleToggleCompareStation}
+              onClearSelection={handleClearCompare}
+              selectedDay={selectedDay}
+              onDaySelect={setSelectedDay}
+            />
+          )}
           {view === "heatmap" && (
             <HeatmapView data={{ ...data, results: data.results, stations: selectedStation ? [selectedStation] : filteredStations, days: selectedDay ? [selectedDay] : data.days }}
               onSelect={setDetailEntry} />
