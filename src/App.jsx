@@ -156,19 +156,33 @@ function getFreeWindows(busy) {
 
 function processData(rows) {
   // Detect column names (case insensitive, flexible matching)
-  const headers = Object.keys(rows[0] || {});
-  const find = (patterns) => headers.find(h => patterns.some(p => h.toLowerCase().replace(/[\s_]/g, "").includes(p)));
+  headers = Object.keys(rows[0] || {});
+  
+  // tanto del Excel como de tus patrones, haciendo el emparejamiento perfecto.
+  const find = (patterns) => headers.find(h => {
+    const headerLimpio = h.toLowerCase().replace(/[^a-z0-9]/g, "");
+    return patterns.some(p => {
+      const patronLimpio = p.toLowerCase().replace(/[^a-z0-9]/g, "");
+      return headerLimpio.includes(patronLimpio);
+    });
+  });
 
   const dayCol = find(["day", "fecha", "date"]);
-  const depStaCol = find(["depsta","dept sta", "deptsta", "departuresta", "depstation"]);
-  const arvlStaCol = find(["arvlsta", "arrsta", "arrivalsta", "arvlstation"]);
-  const depTimeCol = find(["deptime", "dept time", "depttime", "departuretime"]);
-  const arvlTimeCol = find(["arvltime","arvl time", "arrtime", "arrivaltime", "avl time","avltime"]);
+  const depStaCol = find(["depsta", "deptsta", "departure"]);
+  const arvlStaCol = find(["arvlsta", "arrsta", "arrival"]);
+  const depTimeCol = find(["deptime", "depttime", "departuretime"]);
+  const arvlTimeCol = find(["arvltime", "avltime", "arrtime", "arrivaltime"]);
   const fltCol = find(["fltnum", "flightnum", "flight", "flt"]);
   const weekdayCol = find(["weekday", "diasemana", "dia"]);
 
-  if (!depStaCol || !arvlStaCol || !depTimeCol || !arvlTimeCol) {
-    return { error: `No se encontraron columnas necesarias. Columnas detectadas: ${headers.join(", ")}. Se necesitan: Dept Sta, Arvl Sta, Dept Time, Arvl Time.` };
+if (!depStaCol || !arvlStaCol || !depTimeCol || !arvlTimeCol) {
+    const faltantes = [];
+    if (!depStaCol) faltantes.push("Dept Sta");
+    if (!arvlStaCol) faltantes.push("Arvl Sta");
+    if (!depTimeCol) faltantes.push("Dept Time");
+    if (!arvlTimeCol) faltantes.push("Avl Time");
+
+    return { error: `Faltó detectar: ${faltantes.join(", ")}. \nColumnas encontradas en el Excel: ${headers.join(", ")}` };
   }
 
   const stationDayMap = {};
