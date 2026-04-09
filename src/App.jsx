@@ -156,7 +156,7 @@ function getFreeWindows(busy) {
 
 function processData(rows) {
   // Detect column names (case insensitive, flexible matching)
-  headers = Object.keys(rows[0] || {});
+  const headers = Object.keys(rows[0] || {});
   
   // tanto del Excel como de tus patrones, haciendo el emparejamiento perfecto.
   const find = (patterns) => headers.find(h => {
@@ -761,15 +761,15 @@ function OverviewView({ data, onNavigate, onSelectStation }) {
         </div>
         <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 120, marginBottom: 6 }}>
           {freePercentByHour.map((pct, h) => {
-            const height = Math.max(2, pct);
+            const barHeight = Math.max(2, (pct / 100) * 120);
             const isPeak = h === peakHour;
             const isQuiet = h === quietHour;
             return (
-              <div key={h} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+              <div key={h} style={{ flex: 1, display: "flex", alignItems: "flex-end" }}>
                 <div
                   title={`${h.toString().padStart(2, "0")}:00 — ${Math.round(pct)}% libre`}
                   style={{
-                    width: "100%", height: `${height}%`, minHeight: 2,
+                    width: "100%", height: barHeight,
                     background: isQuiet ? "#185FA5" : isPeak ? "#E24B4A" : "#639922",
                     opacity: isQuiet || isPeak ? 1 : 0.55,
                     borderRadius: "3px 3px 0 0", transition: "opacity 0.2s"
@@ -1916,11 +1916,27 @@ export default function App() {
           <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
             {view !== "overview" && view !== "compare" && (
               <>
-                <select value={selectedStation} onChange={e => { setSelectedStation(e.target.value); setDetailEntry(null); }}
-                  style={{ fontSize: 13, padding: "6px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-primary)", color: "var(--color-text-primary)", minWidth: 120 }}>
-                  <option value="">Todas las estaciones ({filteredStations.length})</option>
-                  {filteredStations.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <select value={selectedStation} onChange={e => { setSelectedStation(e.target.value); setDetailEntry(null); }}
+                    style={{ fontSize: 13, padding: "6px 12px", borderRadius: 8, border: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-primary)", color: "var(--color-text-primary)", minWidth: 120 }}>
+                    <option value="">Todas las estaciones ({filteredStations.length})</option>
+                    {filteredStations.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  {selectedStation && (
+                    <button
+                      onClick={() => { setSelectedStation(""); setDetailEntry(null); }}
+                      title="Limpiar seleccion"
+                      style={{
+                        fontSize: 16, lineHeight: 1, padding: "5px 9px", borderRadius: 8,
+                        border: "0.5px solid var(--color-border-tertiary)",
+                        background: "transparent", color: "var(--color-text-tertiary)",
+                        cursor: "pointer"
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.color = "#E24B4A"; e.currentTarget.style.borderColor = "#E24B4A"; }}
+                      onMouseLeave={e => { e.currentTarget.style.color = "var(--color-text-tertiary)"; e.currentTarget.style.borderColor = "var(--color-border-tertiary)"; }}
+                    >×</button>
+                  )}
+                </div>
 
                 <CalendarPicker
                   availableDays={data.days}
@@ -1941,7 +1957,7 @@ export default function App() {
                 { id: "hourly", label: "Hora por hora" },
                 { id: "list", label: "Lista" }
               ].map(v => (
-                <button key={v.id} onClick={() => setView(v.id)} style={{
+                <button key={v.id} onClick={() => { setView(v.id); setDetailEntry(null); }} style={{
                   fontSize: 12, padding: "5px 14px", borderRadius: 6, border: "none", cursor: "pointer",
                   background: view === v.id ? "var(--color-background-primary)" : "transparent",
                   color: view === v.id ? "var(--color-text-primary)" : "var(--color-text-secondary)",
