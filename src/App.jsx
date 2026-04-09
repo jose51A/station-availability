@@ -163,7 +163,7 @@ function processData(rows) {
   const depStaCol = find(["depsta", "deptsta", "departuresta", "depstation"]);
   const arvlStaCol = find(["arvlsta", "arrsta", "arrivalsta", "arvlstation"]);
   const depTimeCol = find(["deptime", "depttime", "departuretime"]);
-  const arvlTimeCol = find(["arvltime", "arrtime", "arrivaltime", "avl time","avltime"]);
+  const arvlTimeCol = find(["arvltime", "arrtime", "arrivaltime", "Avl time","Avltime"]);
   const fltCol = find(["fltnum", "flightnum", "flight", "flt"]);
   const weekdayCol = find(["weekday", "diasemana", "dia"]);
 
