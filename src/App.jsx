@@ -88,6 +88,114 @@ function fmtRelativeDate(iso) {
 
 const BUFFER_MINUTES = 60;
 
+// IATA -> country code mapping based on the operation list provided by the user.
+const IATA_COUNTRY_CODE_MAP = {
+  PTY: "PA", DAV: "PA",
+  EZE: "AR", COR: "AR", MDZ: "AR", ROS: "AR", SLA: "AR", TUC: "AR",
+  AUA: "AW",
+  NAS: "BS",
+  BGI: "BB",
+  BZE: "BZ",
+  VVI: "BO",
+  GRU: "BR", GIG: "BR", BSB: "BR", CNF: "BR", POA: "BR", MAO: "BR", FLN: "BR", SSA: "BR",
+  YYZ: "CA", YUL: "CA",
+  SCL: "CL",
+  BOG: "CO", MDE: "CO", CLO: "CO", BAQ: "CO", CTG: "CO", PEI: "CO", ADZ: "CO", BGA: "CO", CUC: "CO", SMR: "CO",
+  SJO: "CR", LIR: "CR",
+  HAV: "CU", SNU: "CU",
+  CUR: "CW",
+  UIO: "EC", GYE: "EC", MEC: "EC",
+  SAL: "SV",
+  MIA: "US", MCO: "US", JFK: "US", LAX: "US", IAD: "US", ORD: "US", ATL: "US", BOS: "US", LAS: "US", FLL: "US", TPA: "US", DEN: "US", SFO: "US", AUS: "US", BWI: "US", RDU: "US", SAN: "US",
+  GUA: "GT",
+  GEO: "GY",
+  PAP: "HT",
+  XPL: "HN", SAP: "HN",
+  KIN: "JM", MBJ: "JM",
+  MEX: "MX", CUN: "MX", GDL: "MX", MTY: "MX", PVR: "MX", NLU: "MX", SJD: "MX",
+  MGA: "NI",
+  ASU: "PY",
+  LIM: "PE", CIX: "PE",
+  SJU: "PR",
+  SDQ: "DO", PUJ: "DO", STI: "DO", POP:"DO",
+  SXM: "SX",
+  PBM: "SR",
+  POS: "TT",
+  MVD: "UY",
+  CCS: "VE", VLN: "VE", MAR: "VE", BLA: "VE", BRM: "VE"
+};
+
+const COUNTRY_CODE_TO_NAME_MAP = {
+  PA: "Panama",
+  AR: "Argentina",
+  AW: "Aruba",
+  BS: "Bahamas",
+  BB: "Barbados",
+  BZ: "Belice",
+  BO: "Bolivia",
+  BR: "Brasil",
+  CA: "Canada",
+  CL: "Chile",
+  CO: "Colombia",
+  CR: "Costa Rica",
+  CU: "Cuba",
+  CW: "Curazao",
+  EC: "Ecuador",
+  SV: "El Salvador",
+  US: "Estados Unidos",
+  GT: "Guatemala",
+  GY: "Guyana",
+  HT: "Haiti",
+  HN: "Honduras",
+  JM: "Jamaica",
+  MX: "Mexico",
+  NI: "Nicaragua",
+  PY: "Paraguay",
+  PE: "Peru",
+  PR: "Puerto Rico",
+  DO: "Republica Dominicana",
+  SX: "San Martin",
+  SR: "Surinam",
+  TT: "Trinidad y Tobago",
+  UY: "Uruguay",
+  VE: "Venezuela",
+  OT: "Otros"
+};
+
+const COUNTRY_NAME_TO_CODE_MAP = {
+  PANAMA: "PA", COLOMBIA: "CO", ESTADOSUNIDOS: "US", UNITEDSTATES: "US", USA: "US", MEXICO: "MX", BRASIL: "BR", BRAZIL: "BR",
+  ARGENTINA: "AR", PERU: "PE", ECUADOR: "EC", CHILE: "CL", VENEZUELA: "VE", URUGUAY: "UY", PARAGUAY: "PY", BOLIVIA: "BO",
+  COSTARICA: "CR", GUATEMALA: "GT", HONDURAS: "HN", ELSALVADOR: "SV", NICARAGUA: "NI", REPUBLICADOMINICANA: "DO",
+  DOMINICANREPUBLIC: "DO", JAMAICA: "JM", CUBA: "CU", CANADA: "CA", ESPANA: "ES", SPAIN: "ES", GUYANA: "GY",
+  HAITI: "HT", TRINIDADYTOBAGO: "TT", BAHAMAS: "BS", BARBADOS: "BB", ARUBA: "AW", CURACAO: "CW", BELICE: "BZ"
+};
+
+function normalizeCountryCode(value) {
+  const raw = (value || "").toString().trim();
+  if (!raw) return "";
+  const cleaned = raw.toUpperCase().replace(/[^A-Z]/g, "");
+  if (cleaned.length === 2) return cleaned;
+  return COUNTRY_NAME_TO_CODE_MAP[cleaned] || cleaned.slice(0, 2);
+}
+
+function inferCountryCodeFromIata(iata) {
+  const key = (iata || "").toString().trim().toUpperCase();
+  return IATA_COUNTRY_CODE_MAP[key] || "OT";
+}
+
+function getCountryNameByCode(code) {
+  const normalized = normalizeCountryCode(code);
+  return COUNTRY_CODE_TO_NAME_MAP[normalized] || normalized || "Otros";
+}
+
+function getTodayDateString() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 function parseTime(timeStr) {
   if (!timeStr) return null;
   const s = String(timeStr).trim();
@@ -174,6 +282,9 @@ function processData(rows) {
   const arvlTimeCol = find(["arvltime", "avltime", "arrtime", "arrivaltime"]);
   const fltCol = find(["fltnum", "flightnum", "flight", "flt"]);
   const weekdayCol = find(["weekday", "diasemana", "dia"]);
+  const depCountryCol = find(["depcountry", "departcountry", "departurecountry", "deppais", "paisdep", "countrydep"]);
+  const arvlCountryCol = find(["arrcountry", "arrivalcountry", "arvlcountry", "arrpais", "paisarr", "countryarr"]);
+  const stationCountryCol = find(["country", "pais"]);
 
 if (!depStaCol || !arvlStaCol || !depTimeCol || !arvlTimeCol) {
     const faltantes = [];
@@ -188,6 +299,9 @@ if (!depStaCol || !arvlStaCol || !depTimeCol || !arvlTimeCol) {
   const stationDayMap = {};
   const allStations = new Set();
   const allDays = new Set();
+  const stationCountries = {};
+
+  const normalizeCountry = (value) => normalizeCountryCode(value);
 
   for (const row of rows) {
     const day = row[dayCol] || "Unknown";
@@ -196,6 +310,8 @@ if (!depStaCol || !arvlStaCol || !depTimeCol || !arvlTimeCol) {
     const depTime = parseTime(row[depTimeCol]);
     const arvlTime = parseTime(row[arvlTimeCol]);
     const flt = row[fltCol] || "";
+    const depCountry = normalizeCountry(row[depCountryCol] ?? row[stationCountryCol]);
+    const arvlCountry = normalizeCountry(row[arvlCountryCol] ?? row[stationCountryCol]);
 
     if (!depSta && !arvlSta) continue;
 
@@ -214,12 +330,14 @@ if (!depStaCol || !arvlStaCol || !depTimeCol || !arvlTimeCol) {
 
     if (depSta && depTime != null) {
       allStations.add(depSta);
+      if (!stationCountries[depSta]) stationCountries[depSta] = depCountry || inferCountryCodeFromIata(depSta);
       const key = `${depSta}|${dayStr}`;
       if (!stationDayMap[key]) stationDayMap[key] = { station: depSta, day: dayStr, events: [] };
       stationDayMap[key].events.push({ time: depTime, type: "DEP", flt });
     }
     if (arvlSta && arvlTime != null) {
       allStations.add(arvlSta);
+      if (!stationCountries[arvlSta]) stationCountries[arvlSta] = arvlCountry || inferCountryCodeFromIata(arvlSta);
       const key = `${arvlSta}|${dayStr}`;
       if (!stationDayMap[key]) stationDayMap[key] = { station: arvlSta, day: dayStr, events: [] };
       stationDayMap[key].events.push({ time: arvlTime, type: "ARR", flt });
@@ -239,7 +357,9 @@ if (!depStaCol || !arvlStaCol || !depTimeCol || !arvlTimeCol) {
     stations: [...allStations].sort(),
     days: [...allDays].sort(),
     totalRows: rows.length,
-    weekdayCol
+    weekdayCol,
+    stationCountries,
+    countries: [...new Set(Object.values(stationCountries))].sort()
   };
 }
 
@@ -862,12 +982,35 @@ function OverviewView({ data, onNavigate, onSelectStation }) {
   );
 }
 
-function CompareView({ data, selectedStations, onToggleStation, onClearSelection, selectedDay, onDaySelect }) {
+function CompareView({ data, selectedStations, onToggleStation, onClearSelection, onSetSelectedStations, selectedDay, onDaySelect }) {
   if (!data) return null;
   const { results, stations, days } = data;
   const [period, setPeriod] = useState("day");
   const [stationSearch, setStationSearch] = useState("");
-  const MAX_SELECTION = 10;
+  const [selectedCountry, setSelectedCountry] = useState("");
+  const MAX_SELECTION = 15;
+
+  const stationCountryMap = useMemo(() => {
+    const fromData = data.stationCountries || {};
+    const map = {};
+    for (const sta of stations) {
+      map[sta] = normalizeCountryCode(fromData[sta]) || inferCountryCodeFromIata(sta);
+    }
+    return map;
+  }, [data.stationCountries, stations]);
+
+  const availableCountries = useMemo(() => {
+    const set = new Set(stations.map((sta) => stationCountryMap[sta]));
+    return [...set].sort((a, b) => getCountryNameByCode(a).localeCompare(getCountryNameByCode(b)));
+  }, [stations, stationCountryMap]);
+
+  useEffect(() => {
+    if (!selectedCountry) return;
+    const countryStations = stations
+      .filter((sta) => stationCountryMap[sta] === selectedCountry)
+      .slice(0, MAX_SELECTION);
+    onSetSelectedStations(countryStations);
+  }, [selectedCountry, stations, stationCountryMap, onSetSelectedStations]);
 
   const weeks = useMemo(() => {
     const weekMap = new Map();
@@ -889,10 +1032,13 @@ function CompareView({ data, selectedStations, onToggleStation, onClearSelection
   }, [period, weeks, selectedWeek]);
 
   const filteredList = useMemo(() => {
+    const byCountry = selectedCountry
+      ? stations.filter((s) => stationCountryMap[s] === selectedCountry)
+      : stations;
     const term = stationSearch.trim().toUpperCase();
-    if (!term) return stations;
-    return stations.filter(s => s.includes(term));
-  }, [stations, stationSearch]);
+    if (!term) return byCountry;
+    return byCountry.filter((s) => s.includes(term));
+  }, [stations, stationSearch, selectedCountry, stationCountryMap]);
 
   const comparisonData = useMemo(() => {
     if (selectedStations.length === 0) return [];
@@ -988,11 +1134,49 @@ function CompareView({ data, selectedStations, onToggleStation, onClearSelection
               {selectedStations.length}/{MAX_SELECTION}
             </div>
           </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 6, marginBottom: 8 }}>
+            <select
+              value={selectedCountry}
+              onChange={(e) => {
+                setSelectedCountry(e.target.value);
+                setStationSearch("");
+              }}
+              style={{
+                fontSize: 12,
+                padding: "6px 10px",
+                borderRadius: 6,
+                border: "0.5px solid var(--color-border-tertiary)",
+                background: "var(--color-background-secondary)",
+                color: "var(--color-text-primary)",
+                minWidth: 0
+              }}
+            >
+              <option value="">Todos los paises</option>
+              {availableCountries.map((country) => (
+                <option key={country} value={country}>{`${getCountryNameByCode(country)} (${country})`}</option>
+              ))}
+            </select>
+            <button
+              onClick={() => setSelectedCountry("")}
+              style={{
+                fontSize: 11,
+                padding: "4px 8px",
+                borderRadius: 6,
+                border: "0.5px solid var(--color-border-tertiary)",
+                background: "transparent",
+                color: "var(--color-text-secondary)",
+                cursor: "pointer"
+              }}
+              title="Quitar filtro de pais"
+            >
+              Limpiar
+            </button>
+          </div>
           <input
             type="text"
             value={stationSearch}
             onChange={e => setStationSearch(e.target.value)}
-            placeholder="Buscar..."
+            placeholder={selectedCountry ? `Buscar en ${getCountryNameByCode(selectedCountry)}...` : "Buscar..."}
             style={{
               width: "100%", fontSize: 12, padding: "6px 10px", marginBottom: 8,
               borderRadius: 6, border: "0.5px solid var(--color-border-tertiary)",
@@ -1031,6 +1215,9 @@ function CompareView({ data, selectedStations, onToggleStation, onClearSelection
                     style={{ cursor: disabled ? "not-allowed" : "pointer", margin: 0 }}
                   />
                   <span style={{ fontSize: 12, fontWeight: isSelected ? 500 : 400, color: isSelected ? "var(--color-text-info)" : "var(--color-text-primary)" }}>{sta}</span>
+                  <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--color-text-tertiary)" }}>
+                    {`${getCountryNameByCode(stationCountryMap[sta])} (${stationCountryMap[sta]})`}
+                  </span>
                 </label>
               );
             })}
@@ -1106,6 +1293,28 @@ function CompareView({ data, selectedStations, onToggleStation, onClearSelection
                       <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
                         <span style={{ fontSize: 14, fontWeight: 500 }}>{cd.station}</span>
                         <span style={{ fontSize: 11, color: "var(--color-text-tertiary)" }}>{cd.label}</span>
+                        <button
+                          type="button"
+                          onClick={() => onToggleStation(cd.station)}
+                          title={`Quitar ${cd.station} de la comparacion`}
+                          style={{
+                            width: 20,
+                            height: 20,
+                            borderRadius: 999,
+                            border: "0.5px solid var(--color-border-tertiary)",
+                            background: "transparent",
+                            color: "var(--color-text-secondary)",
+                            cursor: "pointer",
+                            lineHeight: 1,
+                            fontSize: 14,
+                            padding: 0,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center"
+                          }}
+                        >
+                          ×
+                        </button>
                       </div>
                       <div style={{ display: "flex", gap: 14, fontSize: 11 }}>
                         <span style={{ color: "var(--color-text-secondary)" }}>
@@ -1558,7 +1767,7 @@ export default function App() {
   const [error, setError] = useState(null);
   const [view, setView] = useState("station");
   const [selectedStation, setSelectedStation] = useState("");
-  const [selectedDay, setSelectedDay] = useState("");
+  const [selectedDay, setSelectedDay] = useState(() => getTodayDateString());
   const [searchTerm, setSearchTerm] = useState("");
   const [detailEntry, setDetailEntry] = useState(null);
   const [savedFiles, setSavedFiles] = useState([]);
@@ -1624,6 +1833,7 @@ export default function App() {
         setData(result);
         setCurrentFileName(file.name);
         setView("station");
+        setSelectedDay(getTodayDateString());
         setCompareStations([]);
         try {
           await saveFileToDB(file.name, result, rows.length);
@@ -1648,6 +1858,7 @@ export default function App() {
         setCurrentFileName(file.name);
         setDetailEntry(null);
         setView("station");
+        setSelectedDay(getTodayDateString());
         setCompareStations([]);
       }
     } catch (e) {
@@ -1670,17 +1881,64 @@ export default function App() {
   const handleToggleCompareStation = useCallback((sta) => {
     setCompareStations(prev => {
       if (prev.includes(sta)) return prev.filter(s => s !== sta);
-      if (prev.length >= 10) return prev;
+      if (prev.length >= 15) return prev;
       return [...prev, sta];
     });
   }, []);
 
   const handleClearCompare = useCallback(() => setCompareStations([]), []);
 
+  const handleSetCompareStations = useCallback((stationsToSet) => {
+    setCompareStations((stationsToSet || []).slice(0, 15));
+  }, []);
+
   const handleOverviewSelectStation = useCallback((sta) => {
     setSelectedStation(sta);
     setView("heatmap");
   }, []);
+
+  const handleCompareSimilarAvailability = useCallback(() => {
+    if (!data || !selectedStation) return;
+
+    const targetDay = selectedDay || data.days[0] || "";
+    if (!targetDay) {
+      setError("No hay dias disponibles para comparar.");
+      return;
+    }
+
+    const baseEntry = data.results[`${selectedStation}|${targetDay}`];
+    if (!baseEntry) {
+      setError(`No hay datos para ${selectedStation} el ${targetDay}.`);
+      return;
+    }
+
+    const TOLERANCE_MINUTES = 60;
+    const similarStations = data.stations
+      .map((sta) => {
+        const entry = data.results[`${sta}|${targetDay}`];
+        if (!entry) return null;
+        return {
+          station: sta,
+          diff: Math.abs(entry.totalFree - baseEntry.totalFree)
+        };
+      })
+      .filter(Boolean)
+      .filter((item) => item.diff <= TOLERANCE_MINUTES)
+      .sort((a, b) => a.diff - b.diff || a.station.localeCompare(b.station))
+      .slice(0, 15)
+      .map((item) => item.station);
+
+    if (similarStations.length === 0) {
+      setError(`No se encontraron estaciones con disponibilidad similar (±1h) para ${selectedStation} el ${targetDay}.`);
+      return;
+    }
+
+    setError(null);
+    setSelectedDay(targetDay);
+    setCompareStations(similarStations);
+    setDetailEntry(null);
+    setView("compare");
+  }, [data, selectedStation, selectedDay]);
 
   const handleDrop = useCallback((e) => {
     e.preventDefault();
@@ -1805,7 +2063,65 @@ export default function App() {
               <span style={{ color: "var(--color-text-tertiary)" }}>— guardado automaticamente</span>
             </div>
           )}
-          {view !== "overview" && view !== "compare" && view !== "station" && <SummaryStats data={data} />}
+
+          <div
+            style={{
+              position: "sticky",
+              top: 0,
+              zIndex: 20,
+              background: "var(--color-background-primary)",
+              padding: "8px 10px",
+              marginBottom: 10,
+              border: "0.5px solid var(--color-border-tertiary)",
+              borderRadius: 10
+            }}
+          >
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <div style={{ display: "flex", gap: 4, background: "var(--color-background-secondary)", borderRadius: 8, padding: 3, flexWrap: "wrap" }}>
+                {[
+                  { id: "station", label: "Estacion" },
+                  { id: "compare", label: "Comparar" },
+                  { id: "overview", label: "Resumen" },
+                  { id: "heatmap", label: "Mapa de calor" },
+                  { id: "hourly", label: "Hora por hora" },
+                  { id: "list", label: "Lista" }
+                ].map(v => (
+                  <button key={v.id} onClick={() => { setView(v.id); setDetailEntry(null); }} style={{
+                    fontSize: 12, padding: "5px 14px", borderRadius: 6, border: "none", cursor: "pointer",
+                    background: view === v.id ? "var(--color-background-primary)" : "transparent",
+                    color: view === v.id ? "var(--color-text-primary)" : "var(--color-text-secondary)",
+                    fontWeight: view === v.id ? 500 : 400, boxShadow: view === v.id ? "0 0.5px 2px rgba(0,0,0,0.08)" : "none"
+                  }}>{v.label}</button>
+                ))}
+              </div>
+
+              <div style={{ flex: 1 }} />
+
+              <button
+                onClick={handleCompareSimilarAvailability}
+                disabled={!selectedStation}
+                title={selectedStation ? "Buscar estaciones con disponibilidad similar (±1h)" : "Selecciona una estacion para comparar similares"}
+                style={{
+                  fontSize: 12,
+                  padding: "5px 14px",
+                  borderRadius: 6,
+                  border: "0.5px solid var(--color-border-info)",
+                  background: selectedStation ? "var(--color-background-info)" : "var(--color-background-secondary)",
+                  color: selectedStation ? "var(--color-text-info)" : "var(--color-text-tertiary)",
+                  cursor: selectedStation ? "pointer" : "not-allowed",
+                  opacity: selectedStation ? 1 : 0.75,
+                  fontWeight: 500
+                }}
+              >
+                Comparar similares (±1h)
+              </button>
+
+              <button onClick={() => { setData(null); setSelectedStation(""); setSelectedDay(getTodayDateString()); setSearchTerm(""); setDetailEntry(null); setError(null); setCurrentFileName(""); setCompareStations([]); setView("station"); }}
+                style={{ fontSize: 12, padding: "5px 14px", borderRadius: 6, border: "0.5px solid var(--color-border-tertiary)", background: "transparent", color: "var(--color-text-secondary)", cursor: "pointer" }}>
+                Cargar otro archivo
+              </button>
+            </div>
+          </div>
 
           {view !== "overview" && view !== "compare" && (
           <div style={{ marginBottom: 12 }} ref={searchBarRef}>
@@ -1947,29 +2263,6 @@ export default function App() {
             )}
 
             <div style={{ flex: 1 }} />
-
-            <div style={{ display: "flex", gap: 4, background: "var(--color-background-secondary)", borderRadius: 8, padding: 3, flexWrap: "wrap" }}>
-              {[
-                { id: "station", label: "Estacion" },
-                { id: "overview", label: "Resumen" },
-                { id: "compare", label: "Comparar" },
-                { id: "heatmap", label: "Mapa de calor" },
-                { id: "hourly", label: "Hora por hora" },
-                { id: "list", label: "Lista" }
-              ].map(v => (
-                <button key={v.id} onClick={() => { setView(v.id); setDetailEntry(null); }} style={{
-                  fontSize: 12, padding: "5px 14px", borderRadius: 6, border: "none", cursor: "pointer",
-                  background: view === v.id ? "var(--color-background-primary)" : "transparent",
-                  color: view === v.id ? "var(--color-text-primary)" : "var(--color-text-secondary)",
-                  fontWeight: view === v.id ? 500 : 400, boxShadow: view === v.id ? "0 0.5px 2px rgba(0,0,0,0.08)" : "none"
-                }}>{v.label}</button>
-              ))}
-            </div>
-
-            <button onClick={() => { setData(null); setSelectedStation(""); setSelectedDay(""); setSearchTerm(""); setDetailEntry(null); setError(null); setCurrentFileName(""); setCompareStations([]); setView("station"); }}
-              style={{ fontSize: 12, padding: "5px 14px", borderRadius: 6, border: "0.5px solid var(--color-border-tertiary)", background: "transparent", color: "var(--color-text-secondary)", cursor: "pointer" }}>
-              Cargar otro archivo
-            </button>
           </div>
 
           {detailEntry && <StationDetail data={detailEntry} />}
@@ -1994,6 +2287,7 @@ export default function App() {
               selectedStations={compareStations}
               onToggleStation={handleToggleCompareStation}
               onClearSelection={handleClearCompare}
+              onSetSelectedStations={handleSetCompareStations}
               selectedDay={selectedDay}
               onDaySelect={setSelectedDay}
             />
@@ -2010,7 +2304,7 @@ export default function App() {
           )}
 
           <div style={{ marginTop: 24, padding: "16px 20px", background: "var(--color-background-secondary)", borderRadius: 12, fontSize: 12, color: "var(--color-text-tertiary)", lineHeight: 1.7 }}>
-            <strong style={{ color: "var(--color-text-secondary)" }}>Como leer los resultados:</strong> Cada estacion se marca como ocupada desde 1 hora antes hasta 1 hora despues de cada vuelo (salida o llegada). Las ventanas verdes en la linea de tiempo son los periodos donde puedes hacer soporte a los equipos sin interferir con operaciones de vuelo. Haz clic en cualquier celda o fila para ver el detalle completo.
+            <strong style={{ color: "var(--color-text-secondary)" }}>Como leer los resultados:</strong> Cada estacion se marca como ocupada desde 1 hora antes hasta 1 hora despues de cada vuelo (salida o llegada). Las ventanas verdes en la linea de tiempo son los periodos donde se puede operar en los equipos sin interferir con operaciones de vuelo.
           </div>
         </>
       )}
