@@ -87,6 +87,53 @@ function fmtRelativeDate(iso) {
 }
 
 const BUFFER_MINUTES = 60;
+const TARGET_UTC_OFFSET = -5;
+const TIMEZONE_LABEL = "Hora Panama (GMT-5)";
+
+const STATION_UTC_OFFSETS = {
+  DAV: -5, PTY: -5,
+  CUN: -5, MEX: -6, MTY: -6, GDL: -6, SJD: -7, PVR: -6, MID: -6, CZM: -5, VSA: -6, OAX: -6, NLU: -6, TIJ: -8,
+  MGA: -6, GUA: -6, SAP: -6, XPL: -6, SJO: -6, SAL: -6, BZE: -6, TGU: -6, LIR: -6, RTB: -6,
+  BOG: -5, MDE: -5, CTG: -5, CLO: -5, PEI: -5, BGA: -5, BAQ: -5, CUC: -5, SMR: -5, ADZ: -5,
+  UIO: -5, GYE: -5, MEC: -5, CUE: -5,
+  LIM: -5, CIX: -5, CUZ: -5, AQP: -5,
+  HAV: -5, HOG: -5, SNU: -5,
+  CCS: -4, VLN: -4, MAR: -4, BRM: -4, BLA: -4,
+  PUJ: -4, SDQ: -4, STI: -4, POP: -4,
+  SJU: -4,
+  MBJ: -5, KIN: -5,
+  POS: -4, BGI: -4, CUR: -4, AUA: -4, SXM: -4, NAS: -5,
+  GEO: -4, PBM: -3, PAP: -5,
+  SCL: -4,
+  EZE: -3, COR: -3, MDZ: -3, SLA: -3, ROS: -3, TUC: -3, FLN: -3,
+  MVD: -3, ASU: -4, VVI: -4, LPB: -4, CBB: -4,
+  MAO: -4, BSB: -3, GIG: -3, GRU: -3, CNF: -3, SSA: -3, POA: -3, SAO: -3,
+  CGH: -3, VCP: -3, CWB: -3, REC: -3, FOR: -3, BEL: -3, NAT: -3,
+  MIA: -5, MCO: -5, FLL: -5, TPA: -5, ATL: -5, BOS: -5, JFK: -5, IAD: -5, BWI: -5, RDU: -5,
+  ORD: -6, AUS: -6, DEN: -7, LAS: -8, LAX: -8, SFO: -8, SAN: -8,
+  DFW: -6, IAH: -6, MSP: -6, DTW: -5, PHL: -5, CLT: -5, EWR: -5, LGA: -5, DCA: -5,
+  SEA: -8, PHX: -7, MSY: -6, STL: -6, MCI: -6, SLC: -7, PDX: -8,
+  YYZ: -5, YUL: -5,
+  GPS: -6, PTP: -4, FDF: -4, ANU: -4, SKB: -4, UVF: -4, SLU: -4, DOM: -4, GND: -4, CYB: -5, GCM: -5,
+  MAD: 1, BCN: 1, LHR: 0, CDG: 1, AMS: 1, FRA: 1, FCO: 1, LIS: 0,
+};
+
+function getStationOffset(stationCode) {
+  const code = (stationCode || "").trim().toUpperCase();
+  if (STATION_UTC_OFFSETS[code] !== undefined) return STATION_UTC_OFFSETS[code];
+  return null;
+}
+
+function convertToTargetTZ(minutesLocalTime, stationCode) {
+  const stationOffset = getStationOffset(stationCode);
+  if (stationOffset === null) return minutesLocalTime;
+  if (stationOffset === TARGET_UTC_OFFSET) return minutesLocalTime;
+  const diffMinutes = (TARGET_UTC_OFFSET - stationOffset) * 60;
+  let converted = minutesLocalTime + diffMinutes;
+  if (converted < 0) converted += 1440;
+  if (converted >= 1440) converted -= 1440;
+  return converted;
+}
 
 // IATA -> country code mapping based on the operation list provided by the user.
 const IATA_COUNTRY_CODE_MAP = {
@@ -333,14 +380,16 @@ if (!depStaCol || !arvlStaCol || !depTimeCol || !arvlTimeCol) {
       if (!stationCountries[depSta]) stationCountries[depSta] = depCountry || inferCountryCodeFromIata(depSta);
       const key = `${depSta}|${dayStr}`;
       if (!stationDayMap[key]) stationDayMap[key] = { station: depSta, day: dayStr, events: [] };
-      stationDayMap[key].events.push({ time: depTime, type: "DEP", flt });
+      const depTimePTY = convertToTargetTZ(depTime, depSta);
+      stationDayMap[key].events.push({ time: depTimePTY, type: "DEP", flt, origTime: depTime, origStation: depSta });
     }
     if (arvlSta && arvlTime != null) {
       allStations.add(arvlSta);
       if (!stationCountries[arvlSta]) stationCountries[arvlSta] = arvlCountry || inferCountryCodeFromIata(arvlSta);
       const key = `${arvlSta}|${dayStr}`;
       if (!stationDayMap[key]) stationDayMap[key] = { station: arvlSta, day: dayStr, events: [] };
-      stationDayMap[key].events.push({ time: arvlTime, type: "ARR", flt });
+      const arvlTimePTY = convertToTargetTZ(arvlTime, arvlSta);
+      stationDayMap[key].events.push({ time: arvlTimePTY, type: "ARR", flt, origTime: arvlTime, origStation: arvlSta });
     }
   }
 
@@ -988,7 +1037,7 @@ function CompareView({ data, selectedStations, onToggleStation, onClearSelection
   const [period, setPeriod] = useState("day");
   const [stationSearch, setStationSearch] = useState("");
   const [selectedCountry, setSelectedCountry] = useState("");
-  const MAX_SELECTION = 15;
+  
 
   const stationCountryMap = useMemo(() => {
     const fromData = data.stationCountries || {};
@@ -1007,8 +1056,7 @@ function CompareView({ data, selectedStations, onToggleStation, onClearSelection
   useEffect(() => {
     if (!selectedCountry) return;
     const countryStations = stations
-      .filter((sta) => stationCountryMap[sta] === selectedCountry)
-      .slice(0, MAX_SELECTION);
+      .filter((sta) => stationCountryMap[sta] === selectedCountry);
     onSetSelectedStations(countryStations);
   }, [selectedCountry, stations, stationCountryMap, onSetSelectedStations]);
 
@@ -1130,8 +1178,8 @@ function CompareView({ data, selectedStations, onToggleStation, onClearSelection
         <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 12, padding: "14px 16px", height: "fit-content" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             <div style={{ fontSize: 13, fontWeight: 500 }}>Estaciones</div>
-            <div style={{ fontSize: 11, color: selectedStations.length >= MAX_SELECTION ? "#E24B4A" : "var(--color-text-tertiary)" }}>
-              {selectedStations.length}/{MAX_SELECTION}
+            <div style={{ fontSize: 11, color: "var(--color-text-tertiary)" }}>
+              {selectedStations.length} seleccionadas
             </div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 6, marginBottom: 8 }}>
@@ -1195,7 +1243,7 @@ function CompareView({ data, selectedStations, onToggleStation, onClearSelection
           <div style={{ maxHeight: 360, overflowY: "auto", marginTop: 4 }}>
             {filteredList.map(sta => {
               const isSelected = selectedStations.includes(sta);
-              const disabled = !isSelected && selectedStations.length >= MAX_SELECTION;
+              const disabled = false;
               return (
                 <label key={sta}
                   style={{
@@ -1258,7 +1306,7 @@ function CompareView({ data, selectedStations, onToggleStation, onClearSelection
 
           {selectedStations.length === 0 ? (
             <div style={{ padding: 40, textAlign: "center", color: "var(--color-text-tertiary)", background: "var(--color-background-secondary)", borderRadius: 12 }}>
-              <div style={{ fontSize: 14, marginBottom: 4 }}>Selecciona hasta {MAX_SELECTION} estaciones</div>
+              <div style={{ fontSize: 14, marginBottom: 4 }}>Selecciona estaciones para comparar</div>
               <div style={{ fontSize: 12 }}>del listado de la izquierda para comparar</div>
             </div>
           ) : (
@@ -1596,7 +1644,9 @@ function StationFocusView({ data, selectedStation, selectedDay }) {
           <div style={{ padding: "4px 18px 14px", borderTop: "0.5px solid var(--color-border-tertiary)" }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8, paddingTop: 10 }}>
               {events.map((ev, i) => (
-                <div key={i} style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>
+                <div key={i} style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}
+                  title={ev.origTime != null && ev.origTime !== ev.time ? `Hora local ${ev.origStation || ""}: ${fmtTime(ev.origTime)}` : ""}
+                >
                   <span style={{
                     fontSize: 9, fontWeight: 500, padding: "2px 6px", borderRadius: 4,
                     background: ev.type === "DEP" ? "#FCEBEB" : "#E1F5EE",
@@ -1605,6 +1655,9 @@ function StationFocusView({ data, selectedStation, selectedDay }) {
                     {ev.type === "DEP" ? "SAL" : "LLE"}
                   </span>
                   <span style={{ color: "var(--color-text-primary)", fontWeight: 500 }}>{fmtTime(ev.time)}</span>
+                  {ev.origTime != null && ev.origTime !== ev.time && (
+                    <span style={{ fontSize: 10, color: "var(--color-text-tertiary)" }}>({fmtTime(ev.origTime)} local)</span>
+                  )}
                   <span style={{ color: "var(--color-text-tertiary)" }}>Flt {ev.flt}</span>
                 </div>
               ))}
@@ -1881,7 +1934,6 @@ export default function App() {
   const handleToggleCompareStation = useCallback((sta) => {
     setCompareStations(prev => {
       if (prev.includes(sta)) return prev.filter(s => s !== sta);
-      if (prev.length >= 15) return prev;
       return [...prev, sta];
     });
   }, []);
@@ -1912,30 +1964,61 @@ export default function App() {
       return;
     }
 
-    const TOLERANCE_MINUTES = 60;
+    // Construir un set de minutos libres de la estacion base
+    const baseFreeMinutes = new Array(1440).fill(false);
+    for (const f of baseEntry.free) {
+      for (let m = f.start; m < f.end; m++) baseFreeMinutes[m] = true;
+    }
+    const baseTotalFree = baseEntry.totalFree || 0;
+    if (baseTotalFree === 0) {
+      setError(`${selectedStation} no tiene ventanas libres el ${targetDay}.`);
+      return;
+    }
+
+    // Para cada estacion, calcular cuanto se traslapan sus ventanas libres con las de la estacion base
+    // y considerar similar si el traslape es al menos un 50% del tiempo libre de la base
+    const MIN_OVERLAP_RATIO = 0.5;
+    const MIN_OVERLAP_MINUTES = 60;
+
     const similarStations = data.stations
       .map((sta) => {
+        if (sta === selectedStation) return null;
         const entry = data.results[`${sta}|${targetDay}`];
         if (!entry) return null;
+
+        let overlapMinutes = 0;
+        for (const f of entry.free) {
+          for (let m = f.start; m < f.end; m++) {
+            if (baseFreeMinutes[m]) overlapMinutes++;
+          }
+        }
+
+        const overlapRatio = overlapMinutes / baseTotalFree;
+        if (overlapMinutes < MIN_OVERLAP_MINUTES) return null;
+        if (overlapRatio < MIN_OVERLAP_RATIO) return null;
+
         return {
           station: sta,
-          diff: Math.abs(entry.totalFree - baseEntry.totalFree)
+          overlap: overlapMinutes,
+          ratio: overlapRatio
         };
       })
       .filter(Boolean)
-      .filter((item) => item.diff <= TOLERANCE_MINUTES)
-      .sort((a, b) => a.diff - b.diff || a.station.localeCompare(b.station))
+      .sort((a, b) => b.overlap - a.overlap || a.station.localeCompare(b.station))
       .slice(0, 15)
       .map((item) => item.station);
 
+    // Incluir la estacion base como primer elemento del listado
+    const finalSelection = [selectedStation, ...similarStations];
+
     if (similarStations.length === 0) {
-      setError(`No se encontraron estaciones con disponibilidad similar (±1h) para ${selectedStation} el ${targetDay}.`);
+      setError(`No se encontraron estaciones con ventanas libres que se traslapen con ${selectedStation} el ${targetDay}.`);
       return;
     }
 
     setError(null);
     setSelectedDay(targetDay);
-    setCompareStations(similarStations);
+    setCompareStations(finalSelection);
     setDetailEntry(null);
     setView("compare");
   }, [data, selectedStation, selectedDay]);
@@ -1952,8 +2035,11 @@ export default function App() {
         <h1 style={{ fontSize: 24, fontWeight: 500, color: "var(--color-text-primary)", letterSpacing: "-0.03em", marginBottom: 4 }}>
           Analisis de disponibilidad de estaciones
         </h1>
-        <p style={{ fontSize: 14, color: "var(--color-text-secondary)", margin: 0 }}>
+        <p style={{ fontSize: 14, color: "var(--color-text-secondary)", margin: 0, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           Sube tu Excel con datos de vuelos para calcular ventanas de soporte disponibles por estacion.
+          <span style={{ fontSize: 11, padding: "3px 10px", background: "var(--color-background-secondary)", borderRadius: 6, color: "var(--color-text-tertiary)", border: "0.5px solid var(--color-border-tertiary)", whiteSpace: "nowrap" }}>
+            {TIMEZONE_LABEL}
+          </span>
         </p>
       </div>
 
@@ -2100,7 +2186,7 @@ export default function App() {
               <button
                 onClick={handleCompareSimilarAvailability}
                 disabled={!selectedStation}
-                title={selectedStation ? "Buscar estaciones con disponibilidad similar (±1h)" : "Selecciona una estacion para comparar similares"}
+                title={selectedStation ? "Buscar estaciones con ventanas libres que se traslapen" : "Selecciona una estacion para comparar similares"}
                 style={{
                   fontSize: 12,
                   padding: "5px 14px",
@@ -2113,7 +2199,7 @@ export default function App() {
                   fontWeight: 500
                 }}
               >
-                Comparar similares (±1h)
+                Comparar similares
               </button>
 
               <button onClick={() => { setData(null); setSelectedStation(""); setSelectedDay(getTodayDateString()); setSearchTerm(""); setDetailEntry(null); setError(null); setCurrentFileName(""); setCompareStations([]); setView("station"); }}
@@ -2265,7 +2351,7 @@ export default function App() {
             <div style={{ flex: 1 }} />
           </div>
 
-          {detailEntry && <StationDetail data={detailEntry} />}
+          {detailEntry && (view === "list" || view === "heatmap") && <StationDetail data={detailEntry} />}
 
           {view === "station" && (
             <StationFocusView
